@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Vellum</string>
+    <string name="tile_label">Vellum Shield</string>
+    <string name="notif_channel_name">Vellum Protection Status</string>
+    <string name="notif_channel_desc">Quiet status indicator while Vellum DNS Shield is active</string>
+</resources>
