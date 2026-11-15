@@ -68,6 +68,11 @@ KS_PASS="${SIGNING_STORE_PASS:-vellum2026}"
 KEY_ALIAS="${SIGNING_KEY_ALIAS:-vellum}"
 KEY_PASS="${SIGNING_KEY_PASS:-vellum2026}"
 
+KEYSTORE="$REPO_ROOT/signing/omit-release.jks"
+KS_PASS="omit2026"
+KEY_PASS="omit2026"
+KEY_ALIAS="omit"
+mkdir -p "$(dirname "$KEYSTORE")"
 if [ ! -f "$KEYSTORE" ]; then
   "$KEYTOOL" -genkeypair \
     -keystore "$KEYSTORE" \

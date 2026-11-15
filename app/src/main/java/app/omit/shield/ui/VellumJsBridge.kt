@@ -354,6 +354,58 @@ class VellumJsBridge(
     }
 
     @JavascriptInterface
+    fun checkUpdateJson(): String {
+        return try {
+            val url = java.net.URL("https://acwac.github.io/Omit/version.json")
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 5000
+                readTimeout = 5000
+            }
+            conn.inputStream.bufferedReader().use { it.readText() }
+        } catch (_: Throwable) {
+            "{}"
+        }
+    }
+
+    @JavascriptInterface
+    fun downloadAndInstallUpdate(apkUrl: String) {
+        val targetUrl = if (apkUrl.isBlank()) "https://acwac.github.io/Omit/downloads/Omit.apk" else apkUrl
+        Thread {
+            try {
+                activity.pushToast("Downloading Omit update...")
+                val updatesDir = java.io.File(activity.cacheDir, "updates").apply { mkdirs() }
+                val apkFile = java.io.File(updatesDir, "Omit-update.apk")
+                val conn = (java.net.URL(targetUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 10000
+                    readTimeout = 30000
+                }
+                conn.inputStream.use { input ->
+                    java.io.FileOutputStream(apkFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                activity.runOnUiThread {
+                    if (android.os.Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) {
+                        val permIntent = android.content.Intent(
+                            android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            android.net.Uri.parse("package:${activity.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        activity.startActivity(permIntent)
+                    }
+                    val contentUri = android.net.Uri.parse("content://app.omit.shield.updateprovider/Omit-update.apk")
+                    val installIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                        setDataAndType(contentUri, "application/vnd.android.package-archive")
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    activity.startActivity(installIntent)
+                }
+            } catch (_: Throwable) {
+                activity.pushToast("Update download failed")
+            }
+        }.start()
+    }
+
+    @JavascriptInterface
     fun openPrivateDnsSettings() {
         activity.runOnUiThread {
             val intents = listOf(

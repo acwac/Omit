@@ -3,14 +3,13 @@ name: Build Omit
 on:
   push:
     branches: [ "main", "arena/**" ]
+    paths-ignore: [ "downloads/**" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   build-android:
@@ -27,12 +26,17 @@ jobs:
         with:
           node-version: '20'
 
-      - uses: android-actions/setup-android@v3
-
       - name: Install Android SDK 34 & Build Tools
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMGR" ]; then
+            curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdline-tools.zip
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          fi
+          yes | "$SDKMGR" --licenses || true
+          "$SDKMGR" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Install Kotlin 1.9.24
         run: |
@@ -73,6 +77,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "desktop-windows/src-tauri -> target"
+
       - name: Compile Blocklists (omit_starter.vbin)
         run: python scripts/compile_blocklists.py
 
@@ -102,30 +110,29 @@ jobs:
           name: Omit-windows
           path: dist-windows/Omit-Windows.exe
 
-  release:
+  publish-downloads:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [build-android, build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
 
       - uses: actions/download-artifact@v4
         with:
           name: Omit-apk
-          path: release-assets
+          path: downloads
 
       - uses: actions/download-artifact@v4
         with:
           name: Omit-windows
-          path: release-assets
+          path: downloads
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v2.0.0
-          name: Omit v2.0.0
-          files: |
-            release-assets/Omit.apk
-            release-assets/Omit-Windows.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit & Push Website Downloads
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add downloads/Omit.apk downloads/Omit-Windows.exe
+          git commit -m "chore: update website downloads Omit.apk and Omit-Windows.exe [skip ci]" || exit 0
+          git push origin HEAD:${{ github.ref_name }}

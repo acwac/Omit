@@ -86,6 +86,26 @@ fn toggle_windows_shield(enable: bool) -> bool {
     enable
 }
 
+#[tauri::command]
+fn download_and_install_update(exe_url: String) -> Result<(), String> {
+    let url = if exe_url.is_empty() {
+        "https://acwac.github.io/Omit/downloads/Omit-Windows.exe".to_string()
+    } else {
+        exe_url
+    };
+    let bytes = reqwest::blocking::get(&url)
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .map_err(|e| e.to_string())?;
+    let installer_path = std::env::temp_dir().join("Omit-Update.exe");
+    std::fs::write(&installer_path, &bytes).map_err(|e| e.to_string())?;
+    restore_windows_dns();
+    std::process::Command::new(&installer_path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    std::process::exit(0);
+}
+
 fn main() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -106,7 +126,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_platform,
             get_windows_stats,
-            toggle_windows_shield
+            toggle_windows_shield,
+            download_and_install_update
         ])
         .on_window_event(|_window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
