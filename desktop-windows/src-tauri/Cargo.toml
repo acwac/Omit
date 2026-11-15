@@ -1,6 +1,6 @@
 [package]
 name = "omit-windows"
-version = "2.0.0"
+version = "2.1.0"
 description = "Omit — Featherlight System-Wide Ad, Tracker & Anti-DPI Shield for Windows 10/11"
 authors = ["Omit"]
 edition = "2021"

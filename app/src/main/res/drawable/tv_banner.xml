@@ -5,16 +5,16 @@
     android:viewportWidth="320"
     android:viewportHeight="180">
     <path
-        android:fillColor="#21634C"
+        android:fillColor="#1E5B47"
         android:pathData="M0,0h320v180h-320z" />
     <group
         android:translateX="106"
         android:translateY="36">
         <path
-            android:fillColor="#F4F6F3"
-            android:pathData="M 52.22,26.08 A 30,30 0 1,0 79.55,50.80 A 19,19 0 0,1 52.22,26.08 Z" />
+            android:fillColor="#F5F2E9"
+            android:pathData="M 56.72,25.13 A 29.00,29.00 0 1,0 82.87,51.28 A 18.50,18.50 0 0,1 56.72,25.13 Z" />
         <path
-            android:fillColor="#F4F6F3"
-            android:pathData="M 69,29 A 6,6 0 1,0 69,41 A 6,6 0 1,0 69,29 Z" />
+            android:fillColor="#F5F2E9"
+            android:pathData="M 69.50,31.30 A 7.20,7.20 0 1,0 69.50,45.70 A 7.20,7.20 0 1,0 69.50,31.30 Z" />
     </group>
 </vector>

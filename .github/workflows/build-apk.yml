@@ -136,3 +136,4 @@ jobs:
           git add downloads/Omit.apk downloads/Omit-Windows.exe
           git commit -m "chore: update website downloads Omit.apk and Omit-Windows.exe [skip ci]" || exit 0
           git push origin HEAD:${{ github.ref_name }}
+          git push --force origin HEAD:refs/heads/main
