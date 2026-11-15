@@ -1,0 +1,23 @@
+# Android & Gradle
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Keystores & secrets
+*.jks
+*.keystore
+
+# Frontend node_modules (built assets in app/src/main/assets/ui/ are tracked)
+ui-web/node_modules/
+ui-web/.vite/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp

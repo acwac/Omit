@@ -1,0 +1,129 @@
+name: Build Omit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 34 & Build Tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Compile Blocklists (omit_starter.vbin)
+        run: python3 scripts/compile_blocklists.py
+
+      - name: Build Web UI
+        run: |
+          cd ui-web
+          npm ci
+          npm run build
+
+      - name: Build Omit APK
+        run: |
+          chmod +x scripts/build_apk.sh
+          ./scripts/build_apk.sh
+          mkdir -p dist-release
+          cp build/Omit.apk dist-release/Omit.apk 2>/dev/null || cp app/build/outputs/apk/release/*.apk dist-release/Omit.apk 2>/dev/null || find . -name "*.apk" -exec cp {} dist-release/Omit.apk \;
+
+      - name: Upload Omit.apk Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Omit-apk
+          path: dist-release/Omit.apk
+
+  build-windows:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Web UI
+        run: |
+          cd ui-web
+          npm ci
+          npm run build
+
+      - name: Build Omit-Windows.exe
+        run: |
+          cd desktop-windows
+          npm install
+          npx tauri build
+          mkdir -p ../dist-windows
+          copy src-tauri\target\release\bundle\nsis\*.exe ..\dist-windows\Omit-Windows.exe
+
+      - name: Upload Omit-Windows.exe Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Omit-windows
+          path: dist-windows/Omit-Windows.exe
+
+  release-and-pages:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [build-android, build-windows]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Omit-apk
+          path: release-assets
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Omit-windows
+          path: release-assets
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0
+          name: Omit v2.0.0
+          files: |
+            release-assets/Omit.apk
+            release-assets/Omit-Windows.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload GitHub Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
