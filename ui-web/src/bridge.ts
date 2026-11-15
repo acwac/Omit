@@ -1,5 +1,5 @@
 export type ShieldState = "off" | "protected" | "paused" | "game";
-export type AppMode = "Protected" | "Bypassed" | "Offline Game";
+export type AppMode = "Protected" | "Bypassed" | "Offline Lock";
 export type LogStatus = "Blocked" | "Allowed";
 
 export interface RecentBlockedItem {
@@ -122,10 +122,10 @@ const DEFAULT_FALLBACK_STATE: VellumStateSnapshot = {
 };
 
 const DEFAULT_FALLBACK_APPS: InstalledAppItem[] = [
-  { pkg: "com.neon.arcadedrift", name: "Arcade Drift", initials: "AD", color: "#7768d9", isSystem: false, mode: "Offline Game" },
+  { pkg: "com.neon.arcadedrift", name: "Arcade Drift", initials: "AD", color: "#7768d9", isSystem: false, mode: "Offline Lock" },
   { pkg: "com.android.chrome", name: "Chrome", initials: "C", color: "#3f9875", isSystem: false, mode: "Protected" },
   { pkg: "com.snapwork.hdfc", name: "HDFC Bank", initials: "H", color: "#477bc6", isSystem: false, mode: "Bypassed" },
-  { pkg: "com.twofingers.chess", name: "Pocket Chess", initials: "PC", color: "#cb8a39", isSystem: false, mode: "Offline Game" },
+  { pkg: "com.twofingers.chess", name: "Pocket Chess", initials: "PC", color: "#cb8a39", isSystem: false, mode: "Offline Lock" },
   { pkg: "com.spotify.music", name: "Spotify", initials: "S", color: "#419b64", isSystem: false, mode: "Protected" },
   { pkg: "com.google.android.youtube", name: "YouTube", initials: "YT", color: "#db5a51", isSystem: false, mode: "Protected" },
 ];

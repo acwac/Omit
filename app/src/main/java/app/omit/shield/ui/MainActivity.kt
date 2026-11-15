@@ -340,13 +340,7 @@ class MainActivity : Activity() {
     }
 
     private fun maybeRequestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            try {
-                if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_POST_NOTIF)
-                }
-            } catch (_: Throwable) {}
-        }
+        // Zero notification permission prompts
     }
 
     private fun scheduleStatePush() {

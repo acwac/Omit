@@ -688,13 +688,13 @@ export default function App() {
     if (window.VellumAndroid) {
       const ok = window.VellumAndroid.setOfflineGameMode(next);
       if (!ok && next) {
-        setToast("Mark at least one app below as 'Offline Game' first");
+        setToast("Mark at least one app below as 'Offline Lock' first");
       }
       return;
     }
-    const gameCnt = apps.filter((a) => a.mode === "Offline Game").length;
+    const gameCnt = apps.filter((a) => a.mode === "Offline Lock").length;
     if (next && gameCnt === 0) {
-      setToast("Mark at least one app below as 'Offline Game' first");
+      setToast("Mark at least one app below as 'Offline Lock' first");
       return;
     }
     setState((cur) => ({
@@ -746,7 +746,7 @@ export default function App() {
       const match = !q || `${app.name} ${app.pkg}`.toLowerCase().includes(q);
       if (!match) return false;
       if (appFilter === "Bypassed") return app.mode === "Bypassed";
-      if (appFilter === "Offline Games") return app.mode === "Offline Game";
+      if (appFilter === "Offline Locks") return app.mode === "Offline Lock";
       if (appFilter === "System Apps") return app.isSystem;
       return !app.isSystem || app.mode !== "Protected";
     });
@@ -945,7 +945,7 @@ export default function App() {
                   <Icon name="game" />
                 </span>
                 <span>
-                  <h2>Offline Game Mode</h2>
+                  <h2>Offline Lock</h2>
                   <p>
                     {state.gameMode
                       ? `${state.offlineGameCount} ${state.offlineGameCount === 1 ? "game is" : "games are"} offline`
@@ -957,7 +957,7 @@ export default function App() {
                 <Toggle
                   on={state.gameMode}
                   onChange={handleToggleGameMode}
-                  label="Offline Game Mode"
+                  label="Offline Lock"
                 />
               </div>
               <button className="learn-row" onClick={() => setGameDetails(!gameDetails)}>
@@ -981,7 +981,7 @@ export default function App() {
                 />
               </label>
               <div className="chips">
-                {["User Apps", "Bypassed", "Offline Games", "System Apps"].map((filter) => (
+                {["User Apps", "Bypassed", "Offline Locks", "System Apps"].map((filter) => (
                   <button
                     className={appFilter === filter ? "active" : ""}
                     key={filter}
@@ -1262,7 +1262,7 @@ export default function App() {
               [
                 ["Protected", "shield", "Normal filtering", "Ads and trackers are blocked."],
                 ["Bypassed", "wifi", "Direct internet", "Vellum skips & hides VPN from this app."],
-                ["Offline Game", "game", "No internet or ads", "Online features will not work while Game Mode is on."],
+                ["Offline Lock", "game", "No internet or ads", "Online features will not work while Game Mode is on."],
               ] as const
             ).map(([mode, icon, benefit, consequence]) => (
               <button
@@ -1411,7 +1411,7 @@ function Home({
     protected: ["You’re protected", "Ads and trackers are blocked"],
     paused: ["Protection paused", `${countdown}s until Vellum resumes`],
     game: [
-      "Offline Game Mode",
+      "Offline Lock",
       `${offlineGameCount} ${offlineGameCount === 1 ? "game has" : "games have"} no internet`,
     ],
   }[shield];
