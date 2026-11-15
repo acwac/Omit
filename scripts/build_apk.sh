@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_APK="${1:-$REPO_ROOT/../Vellum.apk}"
+OUT_APK="${1:-$REPO_ROOT/dist-release/Omit.apk}"
 
 export JAVA_HOME="${JAVA_HOME:-/opt/jdk-17}"
 export PATH="$JAVA_HOME/bin:$PATH"

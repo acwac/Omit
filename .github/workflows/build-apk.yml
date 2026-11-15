@@ -2,9 +2,9 @@ name: Build Omit
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main", "arena/**" ]
   pull_request:
-    branches: [ main ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -34,6 +34,12 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
 
+      - name: Install Kotlin 1.9.24
+        run: |
+          curl -fsSL https://github.com/JetBrains/kotlin/releases/download/v1.9.24/kotlin-compiler-1.9.24.zip -o /tmp/kotlin.zip
+          sudo unzip -q /tmp/kotlin.zip -d /opt
+          sudo mv /opt/kotlinc /opt/kotlin
+
       - name: Compile Blocklists (omit_starter.vbin)
         run: python3 scripts/compile_blocklists.py
 
@@ -46,9 +52,8 @@ jobs:
       - name: Build Omit APK
         run: |
           chmod +x scripts/build_apk.sh
-          ./scripts/build_apk.sh
           mkdir -p dist-release
-          cp build/Omit.apk dist-release/Omit.apk 2>/dev/null || cp app/build/outputs/apk/release/*.apk dist-release/Omit.apk 2>/dev/null || find . -name "*.apk" -exec cp {} dist-release/Omit.apk \;
+          ANDROID_SDK_ROOT="$ANDROID_HOME" KOTLIN_HOME="/opt/kotlin" ./scripts/build_apk.sh ./dist-release/Omit.apk
 
       - name: Upload Omit.apk Artifact
         uses: actions/upload-artifact@v4
@@ -68,6 +73,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Compile Blocklists (omit_starter.vbin)
+        run: python scripts/compile_blocklists.py
+
       - name: Build Web UI
         run: |
           cd ui-web
@@ -75,12 +83,18 @@ jobs:
           npm run build
 
       - name: Build Omit-Windows.exe
+        shell: pwsh
         run: |
           cd desktop-windows
           npm install
           npx tauri build
-          mkdir -p ../dist-windows
-          copy src-tauri\target\release\bundle\nsis\*.exe ..\dist-windows\Omit-Windows.exe
+          New-Item -ItemType Directory -Force -Path ../dist-windows | Out-Null
+          $nsis = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nsis) {
+            Copy-Item $nsis.FullName ../dist-windows/Omit-Windows.exe
+          } else {
+            Copy-Item "src-tauri/target/release/omit-windows.exe" ../dist-windows/Omit-Windows.exe
+          }
 
       - name: Upload Omit-Windows.exe Artifact
         uses: actions/upload-artifact@v4
@@ -88,13 +102,10 @@ jobs:
           name: Omit-windows
           path: dist-windows/Omit-Windows.exe
 
-  release-and-pages:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+  release:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [build-android, build-windows]
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -118,12 +129,3 @@ jobs:
             release-assets/Omit-Windows.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload GitHub Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: website
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4

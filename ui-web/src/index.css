@@ -1682,3 +1682,19 @@ main {
     text-align: center;
   }
 }
+
+/* Android TV 10-foot Landscape & D-Pad Focus Rings */
+:focus-visible {
+  outline: 3px solid #21634c !important;
+  outline-offset: 2px;
+}
+html.dark :focus-visible {
+  outline: 3px solid #7fd4ae !important;
+  outline-offset: 2px;
+}
+@media (min-width: 900px) {
+  .tv-shell {
+    max-width: 1120px !important;
+    margin: 0 auto !important;
+  }
+}
