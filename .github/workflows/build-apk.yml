@@ -13,18 +13,18 @@ permissions:
 
 jobs:
   build-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Install Android SDK 34 & Build Tools
         run: |
@@ -60,7 +60,7 @@ jobs:
           ANDROID_SDK_ROOT="$ANDROID_HOME" KOTLIN_HOME="/opt/kotlin" ./scripts/build_apk.sh ./dist-release/Omit.apk
 
       - name: Upload Omit.apk Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Omit-apk
           path: dist-release/Omit.apk
@@ -69,11 +69,11 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -105,7 +105,7 @@ jobs:
           }
 
       - name: Upload Omit-Windows.exe Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Omit-windows
           path: dist-windows/Omit-Windows.exe
@@ -113,18 +113,18 @@ jobs:
   publish-downloads:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [build-android, build-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.ref_name }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Omit-apk
           path: downloads
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Omit-windows
           path: downloads

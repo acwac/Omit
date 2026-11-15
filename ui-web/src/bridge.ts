@@ -90,7 +90,7 @@ declare global {
 export const isAndroidRuntime = (): boolean => typeof window !== "undefined" && !!window.VellumAndroid;
 
 const DEFAULT_FALLBACK_STATE: VellumStateSnapshot = {
-  dark: false,
+  dark: true,
   shield: "protected",
   countdown: 60,
   intensity: "Balanced",

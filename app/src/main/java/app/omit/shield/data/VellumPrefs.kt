@@ -64,7 +64,7 @@ object VellumPrefs {
     @Volatile var liveLogEnabled: Boolean = true
         private set
 
-    @Volatile var darkMode: Boolean = false
+    @Volatile var darkMode: Boolean = true
         private set
 
     @Volatile var customAllowDomains: Set<String> = emptySet()
@@ -121,7 +121,7 @@ object VellumPrefs {
             liveLogEnabled = prefs.getBoolean("live_log_enabled", true)
 
             val sysDark = (appCtx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-            darkMode = prefs.getBoolean("dark_mode", sysDark)
+            darkMode = prefs.getBoolean("dark_mode", true)
 
             customAllowDomains = readCleanSet("custom_allow")
             customBlockDomains = readCleanSet("custom_block")
