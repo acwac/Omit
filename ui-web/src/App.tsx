@@ -16,7 +16,10 @@ type Tab = "home" | "blocking" | "apps" | "activity";
 
 const iconPaths: Record<string, ReactNode> = {
   shield: (
-    <path d="M12 3 5.5 5.7v5.5c0 4.3 2.7 7.8 6.5 9.3 3.8-1.5 6.5-5 6.5-9.3V5.7L12 3Zm0 3.1 3.7 1.5v3.6c0 2.8-1.5 5.2-3.7 6.4V6.1Z" />
+    <g transform="scale(0.2222)">
+      <path fill="currentColor" stroke="none" d="M 64.14,17.88 A 37.43,37.43 0 1,0 91.16,60.38 A 25.80,25.80 0 0,1 64.14,17.88 Z" />
+      <circle fill="currentColor" stroke="none" cx="75.17" cy="34.93" r="5.63" />
+    </g>
   ),
   sliders: <path d="M4 7h9m4 0h3M4 17h3m4 0h9M15 5v4M9 15v4" />,
   apps: <path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z" />,
@@ -31,7 +34,7 @@ const iconPaths: Record<string, ReactNode> = {
   pause: <path d="M8 5v14m8-14v14" />,
   play: <path d="m8 5 11 7-11 7V5Z" />,
   game: (
-    <path d="M8 9h8a5 5 0 0 1 4.6 7l-.6 1.4a2.5 2.5 0 0 1-4.1.8L14.7 17H9.3l-1.2 1.2a2.5 2.5 0 0 1-4.1-.8L3.4 16A5 5 0 0 1 8 9Zm-1 3v3m-1.5-1.5h3M16 13h.01M18 15h.01" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v9H5v-9Z" />
   ),
   warning: (
     <>
@@ -948,7 +951,7 @@ export default function App() {
                   <h2>Offline Lock</h2>
                   <p>
                     {state.gameMode
-                      ? `${state.offlineGameCount} ${state.offlineGameCount === 1 ? "game is" : "games are"} offline`
+                      ? `${state.offlineGameCount} ${state.offlineGameCount === 1 ? "app is" : "apps are"} offline`
                       : state.offlineGameCount > 0
                         ? `Play with zero ads · ${state.offlineGameCount} selected`
                         : "Play with zero ads"}
@@ -965,8 +968,8 @@ export default function App() {
               </button>
               {gameDetails && (
                 <Detail
-                  benefit="Selected games get no internet, ads, or tracking."
-                  consequence="Multiplayer, cloud saves, and rewarded ads will not work. Global DNS filtering pauses until Game Mode is turned off."
+                  benefit="Selected apps get no internet, ads, or tracking."
+                  consequence="Multiplayer, cloud saves, and rewarded ads will not work. Global DNS filtering pauses until Offline Lock is turned off."
                 />
               )}
             </section>
@@ -1262,7 +1265,7 @@ export default function App() {
               [
                 ["Protected", "shield", "Normal filtering", "Ads and trackers are blocked."],
                 ["Bypassed", "wifi", "Direct internet", "Omit skips & hides VPN from this app."],
-                ["Offline Lock", "game", "No internet or ads", "Online features will not work while Game Mode is on."],
+                ["Offline Lock", "game", "No internet or ads", "Online features will not work while Offline Lock is on."],
               ] as const
             ).map(([mode, icon, benefit, consequence]) => (
               <button
@@ -1451,7 +1454,7 @@ function Home({
           )}
           {shield === "game" && (
             <button className="secondary-btn" onClick={() => onShield("protected")}>
-              Turn off Game Mode
+              Turn off Offline Lock
             </button>
           )}
         </div>
