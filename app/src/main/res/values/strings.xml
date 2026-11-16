@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Omit</string>
-    <string name="tile_label">Omit Shield</string>
+    <string name="tile_label">Omit</string>
     <string name="notif_channel_name">Omit Protection Status</string>
     <string name="notif_channel_desc">Quiet status indicator while Omit DNS Shield is active</string>
     <string name="clean_open_label">Clean Open in Omit</string>

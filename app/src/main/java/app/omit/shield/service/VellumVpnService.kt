@@ -472,7 +472,7 @@ class VellumVpnService : VpnService() {
 
         if (useOfflineSandbox) {
             val builder = Builder()
-                .setSession("Vellum Game Mode")
+                .setSession("Omit Offline Lock")
                 .setMtu(1500)
                 .setBlocking(true)
                 .allowFamily(OsConstants.AF_INET)
@@ -512,7 +512,7 @@ class VellumVpnService : VpnService() {
 
     private fun buildStandardDnsSplitTun(): ParcelFileDescriptor? {
         val builder = Builder()
-            .setSession("Vellum Shield")
+            .setSession("Omit")
             .setMtu(1500)
             .setBlocking(true)
             .allowFamily(OsConstants.AF_INET)
@@ -600,9 +600,9 @@ class VellumVpnService : VpnService() {
 
         val pausedRem = computePauseRemainingSec()
         val title = when {
-            pausedRem > 0 -> "Vellum · Paused (${pausedRem}s)"
-            VellumPrefs.offlineGameMode && VellumPrefs.offlineGamePackages.isNotEmpty() -> "Vellum · Offline Game Mode"
-            else -> "Vellum · Shield Active"
+            pausedRem > 0 -> "Omit · Paused (${pausedRem}s)"
+            VellumPrefs.offlineGameMode && VellumPrefs.offlineGamePackages.isNotEmpty() -> "Omit · Offline Lock"
+            else -> "Omit · Protected"
         }
         val intensity = FilterMetadata.intensityTitleForMask(VellumPrefs.activeCategoryMask.get())
         val upstreamName = FilterMetadata.upstreamById(VellumPrefs.upstreamId).name

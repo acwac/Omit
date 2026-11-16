@@ -113,7 +113,7 @@ class VellumJsBridge(
             val modeCode = VellumPrefs.getAppMode(item.pkg)
             val modeStr = when (modeCode) {
                 1 -> "Bypassed"
-                2 -> "Offline Game"
+                2 -> "Offline Lock"
                 else -> "Protected"
             }
             val obj = JSONObject()
@@ -293,7 +293,7 @@ class VellumJsBridge(
         if (pkg.isBlank()) return
         val modeInt = when (mode) {
             "Bypassed" -> 1
-            "Offline Game" -> 2
+            "Offline Lock" -> 2
             else -> 0
         }
         VellumPrefs.setAppMode(pkg, modeInt)

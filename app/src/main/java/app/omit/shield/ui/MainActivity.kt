@@ -154,7 +154,7 @@ class MainActivity : Activity() {
             createdWebView.loadUrl("$VIRTUAL_ORIGIN/index.html")
         } else {
             val fallbackView = TextView(this).apply {
-                text = "Vellum requires Android System WebView to display its interface.\nPlease enable or update Android System WebView in Play Store."
+                text = "Omit requires Android System WebView to display its interface.\nPlease enable or update Android System WebView in Play Store."
                 gravity = Gravity.CENTER
                 setPadding(64, 64, 64, 64)
                 textSize = 16f

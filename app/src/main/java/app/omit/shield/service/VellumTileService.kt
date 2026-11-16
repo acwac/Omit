@@ -75,7 +75,7 @@ class VellumTileService : TileService() {
         val tile = qsTile ?: return
         val active = forceState ?: (VellumPrefs.shieldState != ShieldState.OFF)
         tile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.label = "Vellum"
+        tile.label = "Omit"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             tile.subtitle = if (active) {
                 FilterMetadata.intensityTitleForMask(VellumPrefs.activeCategoryMask.get())

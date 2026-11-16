@@ -60,6 +60,15 @@ class OmitWidgetProvider : AppWidgetProvider() {
                 if (paused) "Resume" else "60s Pause"
             )
 
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val openPi = PendingIntent.getActivity(
+                context, 1, openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.widget_root, openPi)
+
             val toggleIntent = Intent(context, OmitWidgetProvider::class.java).apply {
                 action = ACTION_TOGGLE_PAUSE
             }

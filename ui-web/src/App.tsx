@@ -9,7 +9,7 @@ import {
   type InstalledAppItem,
   type RecentBlockedItem,
   type ShieldState,
-  type VellumStateSnapshot,
+  type OmitStateSnapshot,
 } from "./bridge";
 
 type Tab = "home" | "blocking" | "apps" | "activity";
@@ -338,7 +338,7 @@ const dnsData = [
   ],
 ] as const;
 
-function computeIntensityName(cats: boolean[]): VellumStateSnapshot["intensity"] {
+function computeIntensityName(cats: boolean[]): OmitStateSnapshot["intensity"] {
   const light = [true, false, false, true, false, false, false, false];
   const balanced = [true, true, true, true, true, true, false, false];
   const strict = [true, true, true, true, true, true, true, true];
@@ -350,7 +350,7 @@ function computeIntensityName(cats: boolean[]): VellumStateSnapshot["intensity"]
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home");
-  const [state, setState] = useState<VellumStateSnapshot>(() => readInitialState());
+  const [state, setState] = useState<OmitStateSnapshot>(() => readInitialState());
   const [apps, setApps] = useState<InstalledAppItem[]>(() => readInitialApps());
 
   const [dnsOpen, setDnsOpen] = useState(false);
@@ -384,7 +384,7 @@ export default function App() {
 
   // Register live callbacks from Android native engine + Back button handler
   useEffect(() => {
-    window.__vellumOnNativeState = (nextState: VellumStateSnapshot) => {
+    window.__vellumOnNativeState = (nextState: OmitStateSnapshot) => {
       setState(nextState);
     };
     window.__vellumOnNativeApps = (nextApps: InstalledAppItem[]) => {
@@ -459,9 +459,9 @@ export default function App() {
 
   // Load installed apps whenever user switches to Apps tab on Android
   useEffect(() => {
-    if (tab === "apps" && window.VellumAndroid) {
+    if (tab === "apps" && window.OmitAndroid) {
       try {
-        const fresh = JSON.parse(window.VellumAndroid.getInstalledAppsJson()) as InstalledAppItem[];
+        const fresh = JSON.parse(window.OmitAndroid.getInstalledAppsJson()) as InstalledAppItem[];
         if (fresh.length > 0) setApps(fresh);
       } catch {
         // ignore
@@ -472,19 +472,19 @@ export default function App() {
   const toggleDark = () => {
     const next = !state.dark;
     setState((cur) => ({ ...cur, dark: next }));
-    window.VellumAndroid?.setDarkMode(next);
+    window.OmitAndroid?.setDarkMode(next);
   };
 
   const handleShieldAction = (target: ShieldState) => {
-    if (window.VellumAndroid) {
+    if (window.OmitAndroid) {
       if (target === "paused") {
-        window.VellumAndroid.pause60s();
+        window.OmitAndroid.pause60s();
       } else if (target === "protected" && state.shield === "paused") {
-        window.VellumAndroid.resumeShield();
+        window.OmitAndroid.resumeShield();
       } else if (target === "protected" && state.shield === "game") {
-        window.VellumAndroid.setOfflineGameMode(false);
+        window.OmitAndroid.setOfflineGameMode(false);
       } else {
-        window.VellumAndroid.toggleShield();
+        window.OmitAndroid.toggleShield();
       }
       return;
     }
@@ -501,8 +501,8 @@ export default function App() {
       categoriesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (window.VellumAndroid) {
-      window.VellumAndroid.selectIntensity(index);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.selectIntensity(index);
       return;
     }
     const nextCats =
@@ -513,14 +513,14 @@ export default function App() {
           : Array<boolean>(8).fill(true);
     setState((cur) => ({
       ...cur,
-      intensity: name as VellumStateSnapshot["intensity"],
+      intensity: name as OmitStateSnapshot["intensity"],
       categories: nextCats,
     }));
   };
 
   const handleToggleCategory = (index: number) => {
-    if (window.VellumAndroid) {
-      window.VellumAndroid.toggleCategory(index);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.toggleCategory(index);
       return;
     }
     setState((cur) => {
@@ -534,8 +534,8 @@ export default function App() {
   };
 
   const handleToggleEngine = (index: number) => {
-    if (window.VellumAndroid) {
-      window.VellumAndroid.toggleEngine(index);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.toggleEngine(index);
       return;
     }
     setState((cur) => ({
@@ -550,8 +550,8 @@ export default function App() {
       setCustomDnsOpen(true);
       return;
     }
-    if (window.VellumAndroid) {
-      window.VellumAndroid.setUpstreamDns(index, "");
+    if (window.OmitAndroid) {
+      window.OmitAndroid.setUpstreamDns(index, "");
     } else {
       setState((cur) => ({ ...cur, dns: index }));
     }
@@ -565,8 +565,8 @@ export default function App() {
       setToast("Enter a valid https:// DoH URL");
       return;
     }
-    if (window.VellumAndroid) {
-      window.VellumAndroid.setUpstreamDns(4, trimmed);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.setUpstreamDns(4, trimmed);
     } else {
       setState((cur) => ({ ...cur, dns: 4, customDohUrl: trimmed }));
     }
@@ -590,8 +590,8 @@ export default function App() {
       setToast("Enter a valid domain (e.g. example.com)");
       return;
     }
-    if (window.VellumAndroid) {
-      window.VellumAndroid.addAllowDomain(clean);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.addAllowDomain(clean);
     } else {
       setState((cur) => ({
         ...cur,
@@ -610,8 +610,8 @@ export default function App() {
       setToast("Enter a valid domain (e.g. ads.example.com)");
       return;
     }
-    if (window.VellumAndroid) {
-      window.VellumAndroid.addBlockDomain(clean);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.addBlockDomain(clean);
     } else {
       setState((cur) => ({
         ...cur,
@@ -624,8 +624,8 @@ export default function App() {
   };
 
   const handleRemoveAllow = (domain: string) => {
-    if (window.VellumAndroid) {
-      window.VellumAndroid.removeAllowDomain(domain);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.removeAllowDomain(domain);
     } else {
       setState((cur) => ({
         ...cur,
@@ -635,8 +635,8 @@ export default function App() {
   };
 
   const handleRemoveBlock = (domain: string) => {
-    if (window.VellumAndroid) {
-      window.VellumAndroid.removeBlockDomain(domain);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.removeBlockDomain(domain);
     } else {
       setState((cur) => ({
         ...cur,
@@ -651,8 +651,8 @@ export default function App() {
       setToast("Enter a valid https:// blocklist URL");
       return;
     }
-    if (window.VellumAndroid) {
-      window.VellumAndroid.addCustomListUrl(trimmed);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.addCustomListUrl(trimmed);
     } else {
       setState((cur) => ({
         ...cur,
@@ -664,8 +664,8 @@ export default function App() {
   };
 
   const handleRemoveUrl = (url: string) => {
-    if (window.VellumAndroid) {
-      window.VellumAndroid.removeCustomListUrl(url);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.removeCustomListUrl(url);
     } else {
       setState((cur) => ({
         ...cur,
@@ -676,8 +676,8 @@ export default function App() {
 
   const handleSyncLists = () => {
     if (state.syncing) return;
-    if (window.VellumAndroid) {
-      window.VellumAndroid.syncLists();
+    if (window.OmitAndroid) {
+      window.OmitAndroid.syncLists();
       return;
     }
     setToast("Lists are up to date");
@@ -685,8 +685,8 @@ export default function App() {
 
   const handleToggleGameMode = () => {
     const next = !state.gameMode;
-    if (window.VellumAndroid) {
-      const ok = window.VellumAndroid.setOfflineGameMode(next);
+    if (window.OmitAndroid) {
+      const ok = window.OmitAndroid.setOfflineGameMode(next);
       if (!ok && next) {
         setToast("Mark at least one app below as 'Offline Lock' first");
       }
@@ -705,8 +705,8 @@ export default function App() {
   };
 
   const handleSetAppMode = (app: InstalledAppItem, mode: AppMode) => {
-    if (window.VellumAndroid) {
-      window.VellumAndroid.setAppMode(app.pkg, mode);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.setAppMode(app.pkg, mode);
     }
     setApps((cur) => cur.map((a) => (a.pkg === app.pkg ? { ...a, mode } : a)));
     setToast(`${app.name} set to ${mode}`);
@@ -724,8 +724,8 @@ export default function App() {
 
   const handleToggleLogging = () => {
     const next = !state.logging;
-    if (window.VellumAndroid) {
-      window.VellumAndroid.setLogging(next);
+    if (window.OmitAndroid) {
+      window.OmitAndroid.setLogging(next);
     } else {
       setState((cur) => ({ ...cur, logging: next, logs: next ? cur.logs : [] }));
     }
@@ -733,8 +733,8 @@ export default function App() {
 
   const handleClearLogs = () => {
     setFrozenLogs([]);
-    if (window.VellumAndroid) {
-      window.VellumAndroid.clearLogs();
+    if (window.OmitAndroid) {
+      window.OmitAndroid.clearLogs();
     } else {
       setState((cur) => ({ ...cur, logs: [] }));
     }
@@ -815,8 +815,8 @@ export default function App() {
             onIntensity={() => setTab("blocking")}
             onAllowDomain={handleAddAllow}
             onOpenPrivateDns={() => {
-              if (window.VellumAndroid) {
-                window.VellumAndroid.openPrivateDnsSettings();
+              if (window.OmitAndroid) {
+                window.OmitAndroid.openPrivateDnsSettings();
               } else {
                 setToast("Opening network settings");
               }
@@ -826,7 +826,7 @@ export default function App() {
 
         {tab === "blocking" && (
           <div className="page">
-            <Header title="Blocking" subtitle="Choose how much Vellum should block." />
+            <Header title="Blocking" subtitle="Choose how much Omit should block." />
 
             <section className="section">
               <div className="section-title">
@@ -1261,7 +1261,7 @@ export default function App() {
             {(
               [
                 ["Protected", "shield", "Normal filtering", "Ads and trackers are blocked."],
-                ["Bypassed", "wifi", "Direct internet", "Vellum skips & hides VPN from this app."],
+                ["Bypassed", "wifi", "Direct internet", "Omit skips & hides VPN from this app."],
                 ["Offline Lock", "game", "No internet or ads", "Online features will not work while Game Mode is on."],
               ] as const
             ).map(([mode, icon, benefit, consequence]) => (
@@ -1320,8 +1320,8 @@ export default function App() {
             <button
               className="secondary-modal-btn"
               onClick={() => {
-                if (window.VellumAndroid) {
-                  window.VellumAndroid.removeCustomRuleForDomain(selectedLog.domain);
+                if (window.OmitAndroid) {
+                  window.OmitAndroid.removeCustomRuleForDomain(selectedLog.domain);
                 } else {
                   handleRemoveAllow(selectedLog.domain);
                   handleRemoveBlock(selectedLog.domain);
@@ -1409,7 +1409,7 @@ function Home({
   const copy = {
     off: ["Protection is off", "Tap the shield to turn on"],
     protected: ["You’re protected", "Ads and trackers are blocked"],
-    paused: ["Protection paused", `${countdown}s until Vellum resumes`],
+    paused: ["Protection paused", `${countdown}s until Omit resumes`],
     game: [
       "Offline Lock",
       `${offlineGameCount} ${offlineGameCount === 1 ? "game has" : "games have"} no internet`,
@@ -1426,7 +1426,7 @@ function Home({
       <Header title="Home" />
 
       <section className={`shield-card ${shield}`}>
-        <button className="shield-button" onClick={toggleShield} aria-label="Toggle Vellum">
+        <button className="shield-button" onClick={toggleShield} aria-label="Toggle Omit">
           <span className="shield-ring">
             <span>
               <Icon
@@ -1485,7 +1485,7 @@ function Home({
           </span>
           <div>
             <b>Private DNS conflict</b>
-            <p>Android Private DNS ({privateDnsHost}) may bypass Vellum.</p>
+            <p>Android Private DNS ({privateDnsHost}) may bypass Omit.</p>
           </div>
           <button onClick={onOpenPrivateDns}>Open Settings</button>
         </section>

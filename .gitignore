@@ -21,3 +21,4 @@ ui-web/.vite/
 .DS_Store
 Thumbs.db
 *.swp
+!signing/omit-release.jks
