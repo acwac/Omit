@@ -354,6 +354,14 @@ class VellumJsBridge(
     }
 
     @JavascriptInterface
+    fun copyToClipboard(text: String) {
+        try {
+            val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Omit", text))
+        } catch (_: Throwable) {}
+    }
+
+    @JavascriptInterface
     fun getBurnerEmailJson(forceNew: Boolean): String {
         return app.omit.shield.net.BurnerManager.getOrCreateEmail(activity, forceNew).toString()
     }
@@ -376,8 +384,12 @@ class VellumJsBridge(
     @JavascriptInterface
     fun setHomeShieldEnabled(enabled: Boolean) {
         VellumPrefs.homeShieldEnabled = enabled
-        if (enabled) app.omit.shield.net.HomeShieldServer.start(null)
-        else app.omit.shield.net.HomeShieldServer.stop()
+        if (enabled) {
+            app.omit.shield.net.HomeShieldServer.start(null)
+            reloadVpnIfRunning()
+        } else {
+            app.omit.shield.net.HomeShieldServer.stop()
+        }
     }
 
     @JavascriptInterface

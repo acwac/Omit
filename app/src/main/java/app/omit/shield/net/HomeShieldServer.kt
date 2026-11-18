@@ -3,8 +3,7 @@ package app.omit.shield.net
 import android.net.VpnService
 import app.omit.shield.data.VellumPrefs
 import app.omit.shield.dns.BlockEngine
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
@@ -68,11 +67,33 @@ object HomeShieldServer {
         serverSocket = null
     }
 
+    private fun readHeaderBytes(input: java.io.InputStream): Pair<ByteArray, ByteArray>? {
+        val buf = ByteArrayOutputStream()
+        val tmp = ByteArray(1024)
+        while (buf.size() < 32768) {
+            val n = input.read(tmp)
+            if (n <= 0) break
+            buf.write(tmp, 0, n)
+            val data = buf.toByteArray()
+            for (i in 0 until data.size - 3) {
+                if (data[i] == 13.toByte() && data[i + 1] == 10.toByte() &&
+                    data[i + 2] == 13.toByte() && data[i + 3] == 10.toByte()
+                ) {
+                    val headerEnd = i + 4
+                    return data.copyOfRange(0, headerEnd) to data.copyOfRange(headerEnd, data.size)
+                }
+            }
+        }
+        return null
+    }
+
     private fun handleClient(client: Socket, vpn: VpnService?) {
         client.use { sock ->
             try {
-                val reader = BufferedReader(InputStreamReader(sock.getInputStream()))
-                val reqLine = reader.readLine() ?: return
+                val input = sock.getInputStream()
+                val (headerBytes, leftover) = readHeaderBytes(input) ?: return
+                val headerStr = String(headerBytes, Charsets.ISO_8859_1)
+                val reqLine = headerStr.substringBefore("\r\n")
                 val parts = reqLine.split(" ")
                 if (parts.size < 2) return
                 val method = parts[0]
@@ -106,11 +127,19 @@ object HomeShieldServer {
                 val outbound = Socket()
                 vpn?.protect(outbound)
                 outbound.connect(java.net.InetSocketAddress(host, port), 5000)
+                val outStream = outbound.getOutputStream()
                 if (method == "CONNECT") {
                     sock.getOutputStream().write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
+                } else {
+                    outStream.write(headerBytes)
                 }
+                if (leftover.isNotEmpty()) {
+                    outStream.write(leftover)
+                }
+                outStream.flush()
+
                 val t1 = Thread {
-                    try { sock.getInputStream().copyTo(outbound.getOutputStream()) } catch (_: Throwable) {}
+                    try { input.copyTo(outStream) } catch (_: Throwable) {}
                 }
                 t1.isDaemon = true
                 t1.start()
