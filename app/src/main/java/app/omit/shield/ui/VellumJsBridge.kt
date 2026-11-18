@@ -375,6 +375,7 @@ class VellumJsBridge(
 
     @JavascriptInterface
     fun setHomeShieldEnabled(enabled: Boolean) {
+        VellumPrefs.homeShieldEnabled = enabled
         if (enabled) app.omit.shield.net.HomeShieldServer.start(null)
         else app.omit.shield.net.HomeShieldServer.stop()
     }
@@ -382,6 +383,7 @@ class VellumJsBridge(
     @JavascriptInterface
     fun getHomeShieldInfoJson(): String {
         val o = org.json.JSONObject()
+        o.put("enabled", VellumPrefs.homeShieldEnabled)
         o.put("lanIp", app.omit.shield.net.HomeShieldServer.getLanIp())
         o.put("port", app.omit.shield.net.HomeShieldServer.activePort)
         o.put("blockedCount", app.omit.shield.net.HomeShieldServer.blockedCount.get())

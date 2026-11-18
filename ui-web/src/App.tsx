@@ -22,7 +22,7 @@ import {
   type HomeShieldInfo,
 } from "./bridge";
 
-type Tab = "home" | "blocking" | "apps" | "activity";
+type Tab = "home" | "burner" | "blocking" | "apps" | "activity";
 
 const iconPaths: Record<string, ReactNode> = {
   shield: (
@@ -784,6 +784,7 @@ export default function App() {
 
   const nav = [
     ["home", "Home", "shield"],
+    ["burner", "Burner", "mail"],
     ["blocking", "Blocking", "sliders"],
     ["apps", "Apps", "apps"],
     ["activity", "Activity", "pulse"],
@@ -836,8 +837,12 @@ export default function App() {
               }
             }}
           />
-          <OmitHomeTools onToast={setToast} />
+          <HomeShieldCard onToast={setToast} />
         </>
+        )}
+
+        {tab === "burner" && (
+          <BurnerScreen onToast={setToast} />
         )}
 
         {tab === "blocking" && (
@@ -1536,15 +1541,60 @@ function Home({
   );
 }
 
-function OmitHomeTools({ onToast }: { onToast: (msg: string) => void }) {
+function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
+  const initial = nativeGetHomeShieldInfo();
+  const [homeOn, setHomeOn] = useState<boolean>(Boolean((initial as unknown as { enabled?: boolean })?.enabled));
+  const [homeInfo, setHomeInfo] = useState<HomeShieldInfo>(initial);
+
+  const copyText = (txt: string, label: string) => {
+    if (!txt) return;
+    navigator.clipboard?.writeText(txt).catch(() => {});
+    onToast(`${label} copied`);
+  };
+
+  const toggleHomeShield = () => {
+    const next = !homeOn;
+    setHomeOn(next);
+    nativeSetHomeShield(next);
+    setHomeInfo(nativeGetHomeShieldInfo());
+    onToast(next ? "Whole-Home Wi-Fi Shield active" : "Whole-Home Wi-Fi Shield off");
+  };
+
+  return (
+    <section className="card" style={{ padding: 16, marginTop: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <strong style={{ fontSize: 15 }}>Whole-Home Wi-Fi Shield</strong>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Protect TVs, consoles &amp; iPhones on this Wi-Fi</div>
+        </div>
+        <button className={`chip ${homeOn ? "active" : ""}`} onClick={toggleHomeShield}>
+          {homeOn ? "On" : "Off"}
+        </button>
+      </div>
+      {homeOn && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Auto URL: <strong>http://{homeInfo.lanIp}:{homeInfo.port}/omit.pac</strong></span>
+            <button className="chip" onClick={() => copyText(`http://${homeInfo.lanIp}:${homeInfo.port}/omit.pac`, "Auto URL")}>Copy</button>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Manual Proxy: <strong>{homeInfo.lanIp}:{homeInfo.port}</strong></span>
+            <button className="chip" onClick={() => copyText(`${homeInfo.lanIp}:${homeInfo.port}`, "Proxy")}>Copy</button>
+          </div>
+          <div style={{ opacity: 0.7 }}>{homeInfo.blockedCount} home network ads blocked</div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
   const [burnerTab, setBurnerTab] = useState<"email" | "sms">("email");
   const [emailAddr, setEmailAddr] = useState<string>("");
   const [emailMsgs, setEmailMsgs] = useState<BurnerEmailMsg[]>([]);
   const [smsNums, setSmsNums] = useState<BurnerSmsNum[]>([]);
   const [smsIdx, setSmsIdx] = useState<number>(0);
   const [smsMsgs, setSmsMsgs] = useState<BurnerSmsMsg[]>([]);
-  const [homeOn, setHomeOn] = useState<boolean>(false);
-  const [homeInfo, setHomeInfo] = useState<HomeShieldInfo>({ lanIp: "192.168.1.10", port: 8080, blockedCount: 0 });
 
   const copyText = (txt: string, label: string) => {
     if (!txt) return;
@@ -1567,104 +1617,71 @@ function OmitHomeTools({ onToast }: { onToast: (msg: string) => void }) {
     }
   };
 
-  const toggleHomeShield = () => {
-    const next = !homeOn;
-    setHomeOn(next);
-    nativeSetHomeShield(next);
-    setHomeInfo(nativeGetHomeShieldInfo());
-    onToast(next ? "Whole-Home Wi-Fi Shield active" : "Whole-Home Wi-Fi Shield off");
-  };
+  useEffect(() => {
+    if (burnerTab === "email" && !emailAddr) loadEmail(false);
+    if (burnerTab === "sms" && smsNums.length === 0) loadSms(0);
+  }, [burnerTab]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 14 }}>
-      <section className="card" style={{ padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div>
-            <strong style={{ fontSize: 15 }}>Burner Shield</strong>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>Disposable email &amp; SMS OTPs</div>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button className={`chip ${burnerTab === "email" ? "active" : ""}`} onClick={() => setBurnerTab("email")}>Email</button>
-            <button className={`chip ${burnerTab === "sms" ? "active" : ""}`} onClick={() => setBurnerTab("sms")}>Number</button>
-          </div>
-        </div>
+    <div className="page">
+      <Header title="Burner" subtitle="Disposable email &amp; SMS OTPs." />
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button className={`chip ${burnerTab === "email" ? "active" : ""}`} onClick={() => setBurnerTab("email")}>Burner Email</button>
+        <button className={`chip ${burnerTab === "sms" ? "active" : ""}`} onClick={() => setBurnerTab("sms")}>Burner Number</button>
+      </div>
 
-        {burnerTab === "email" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
-                {emailAddr || "Tap Refresh to create inbox"}
-              </span>
-              {emailAddr && <button className="chip" onClick={() => copyText(emailAddr, "Email")}>Copy</button>}
-              <button className="chip" onClick={() => loadEmail(false)}>Refresh</button>
-              <button className="chip" onClick={() => loadEmail(true)}>New</button>
-            </div>
-            {emailMsgs.map((m) => (
-              <div key={m.id} style={{ padding: 10, borderRadius: 12, background: "rgba(128,128,128,0.08)", fontSize: 12.5 }}>
-                <div style={{ fontWeight: 600 }}>{m.subject || m.from}</div>
-                <div style={{ opacity: 0.75 }}>{m.intro}</div>
-                {m.otp && (
-                  <button className="chip active" style={{ marginTop: 6 }} onClick={() => copyText(m.otp, "OTP")}>
-                    Copy OTP: {m.otp}
-                  </button>
-                )}
-              </div>
-            ))}
+      {burnerTab === "email" ? (
+        <section className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {emailAddr || "Generating inbox..."}
+            </span>
+            {emailAddr && <button className="chip" onClick={() => copyText(emailAddr, "Email")}>Copy</button>}
+            <button className="chip" onClick={() => loadEmail(false)}>Refresh</button>
+            <button className="chip" onClick={() => loadEmail(true)}>New</button>
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
-                {smsNums.length ? smsNums[smsIdx % smsNums.length].formatted : "Tap Load for live number"}
-              </span>
-              {smsNums.length > 0 && (
-                <>
-                  <button className="chip" onClick={() => copyText(smsNums[smsIdx % smsNums.length].formatted, "Number")}>Copy</button>
-                  <button className="chip" onClick={() => { const n = smsIdx + 1; setSmsIdx(n); loadSms(n); }}>Switch</button>
-                </>
+          {emailMsgs.length === 0 && <div style={{ fontSize: 12.5, opacity: 0.65 }}>No emails yet. Tap Refresh to check inbox.</div>}
+          {emailMsgs.map((m) => (
+            <div key={m.id} style={{ padding: 12, borderRadius: 14, background: "rgba(128,128,128,0.08)", fontSize: 13 }}>
+              <div style={{ fontWeight: 600 }}>{m.subject || m.from}</div>
+              <div style={{ opacity: 0.75, marginTop: 2 }}>{m.intro}</div>
+              {m.otp && (
+                <button className="chip active" style={{ marginTop: 8 }} onClick={() => copyText(m.otp, "OTP")}>
+                  Copy OTP: {m.otp}
+                </button>
               )}
-              <button className="chip" onClick={() => loadSms(smsIdx)}>Load</button>
             </div>
-            <div style={{ fontSize: 11.5, opacity: 0.65 }}>Public inbox—use only for throwaway sign-ups, never banking.</div>
-            {smsMsgs.map((m, i) => (
-              <div key={i} style={{ padding: 10, borderRadius: 12, background: "rgba(128,128,128,0.08)", fontSize: 12.5 }}>
-                <div style={{ fontWeight: 600 }}>{m.from} · {m.time}</div>
-                <div style={{ opacity: 0.8 }}>{m.text}</div>
-                {m.otp && (
-                  <button className="chip active" style={{ marginTop: 6 }} onClick={() => copyText(m.otp, "Code")}>
-                    Copy Code: {m.otp}
-                  </button>
-                )}
-              </div>
-            ))}
+          ))}
+        </section>
+      ) : (
+        <section className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1 }}>
+              {smsNums.length ? smsNums[smsIdx % smsNums.length].formatted : "Loading live number..."}
+            </span>
+            {smsNums.length > 0 && (
+              <>
+                <button className="chip" onClick={() => copyText(smsNums[smsIdx % smsNums.length].formatted, "Number")}>Copy</button>
+                <button className="chip" onClick={() => { const n = smsIdx + 1; setSmsIdx(n); loadSms(n); }}>Switch</button>
+              </>
+            )}
+            <button className="chip" onClick={() => loadSms(smsIdx)}>Refresh</button>
           </div>
-        )}
-      </section>
-
-      <section className="card" style={{ padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <strong style={{ fontSize: 15 }}>Whole-Home Wi-Fi Shield</strong>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>Protect TVs, consoles &amp; iPhones on this Wi-Fi</div>
-          </div>
-          <button className={`chip ${homeOn ? "active" : ""}`} onClick={toggleHomeShield}>
-            {homeOn ? "On" : "Off"}
-          </button>
-        </div>
-        {homeOn && (
-          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>Auto URL: <strong>http://{homeInfo.lanIp}:{homeInfo.port}/omit.pac</strong></span>
-              <button className="chip" onClick={() => copyText(`http://${homeInfo.lanIp}:${homeInfo.port}/omit.pac`, "Auto URL")}>Copy</button>
+          <div style={{ fontSize: 11.5, opacity: 0.65 }}>Public inbox—use only for throwaway sign-ups, never banking.</div>
+          {smsMsgs.length === 0 && <div style={{ fontSize: 12.5, opacity: 0.65 }}>No SMS yet. Tap Refresh to check.</div>}
+          {smsMsgs.map((m, i) => (
+            <div key={i} style={{ padding: 12, borderRadius: 14, background: "rgba(128,128,128,0.08)", fontSize: 13 }}>
+              <div style={{ fontWeight: 600 }}>{m.from} · {m.time}</div>
+              <div style={{ opacity: 0.8, marginTop: 2 }}>{m.text}</div>
+              {m.otp && (
+                <button className="chip active" style={{ marginTop: 8 }} onClick={() => copyText(m.otp, "Code")}>
+                  Copy Code: {m.otp}
+                </button>
+              )}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>Manual Proxy: <strong>{homeInfo.lanIp}:{homeInfo.port}</strong></span>
-              <button className="chip" onClick={() => copyText(`${homeInfo.lanIp}:${homeInfo.port}`, "Proxy")}>Copy</button>
-            </div>
-            <div style={{ opacity: 0.7 }}>{homeInfo.blockedCount} home network ads blocked</div>
-          </div>
-        )}
-      </section>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
