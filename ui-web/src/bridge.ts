@@ -185,6 +185,85 @@ export function openExternalUrl(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+export interface BurnerEmailState {
+  address: string;
+  provider?: string;
+  error?: string;
+}
+
+export interface BurnerEmailMsg {
+  id: string;
+  from: string;
+  subject: string;
+  intro: string;
+  otp: string;
+}
+
+export interface BurnerSmsNum {
+  digits: string;
+  formatted: string;
+}
+
+export interface BurnerSmsMsg {
+  from: string;
+  text: string;
+  time: string;
+  otp: string;
+}
+
+export interface HomeShieldInfo {
+  lanIp: string;
+  port: number;
+  blockedCount: number;
+}
+
+export function nativeGetBurnerEmail(forceNew: boolean): BurnerEmailState {
+  try {
+    const fn = (window.VellumAndroid as unknown as { getBurnerEmailJson?: (f: boolean) => string })?.getBurnerEmailJson;
+    if (fn) return JSON.parse(fn(forceNew)) as BurnerEmailState;
+  } catch { /* ignore */ }
+  return { address: "" };
+}
+
+export function nativeGetBurnerInbox(): BurnerEmailMsg[] {
+  try {
+    const fn = (window.VellumAndroid as unknown as { getBurnerInboxJson?: () => string })?.getBurnerInboxJson;
+    if (fn) return JSON.parse(fn()) as BurnerEmailMsg[];
+  } catch { /* ignore */ }
+  return [];
+}
+
+export function nativeGetBurnerSmsNumbers(): BurnerSmsNum[] {
+  try {
+    const fn = (window.VellumAndroid as unknown as { getBurnerSmsNumbersJson?: () => string })?.getBurnerSmsNumbersJson;
+    if (fn) return JSON.parse(fn()) as BurnerSmsNum[];
+  } catch { /* ignore */ }
+  return [];
+}
+
+export function nativeGetBurnerSmsMessages(digits: string): BurnerSmsMsg[] {
+  try {
+    const fn = (window.VellumAndroid as unknown as { getBurnerSmsMessagesJson?: (d: string) => string })?.getBurnerSmsMessagesJson;
+    if (fn) return JSON.parse(fn(digits)) as BurnerSmsMsg[];
+  } catch { /* ignore */ }
+  return [];
+}
+
+export function nativeSetHomeShield(enabled: boolean): void {
+  try {
+    const fn = (window.VellumAndroid as unknown as { setHomeShieldEnabled?: (e: boolean) => void })?.setHomeShieldEnabled;
+    if (fn) fn(enabled);
+  } catch { /* ignore */ }
+}
+
+export function nativeGetHomeShieldInfo(): HomeShieldInfo {
+  try {
+    const fn = (window.VellumAndroid as unknown as { getHomeShieldInfoJson?: () => string })?.getHomeShieldInfoJson;
+    if (fn) return JSON.parse(fn()) as HomeShieldInfo;
+  } catch { /* ignore */ }
+  return { lanIp: "192.168.1.10", port: 8080, blockedCount: 0 };
+}
+
 export function formatCompactCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 100_000) return `${(n / 1_000).toFixed(1)}k`;
