@@ -1,8 +1,10 @@
 {
-  "version": "2.1.0",
-  "versionCode": 210,
+  "version": "2.4.0",
+  "versionCode": 240,
+  "minNativeCode": 230,
   "releasedAt": "2026-11-14",
   "androidApkUrl": "https://acwac.github.io/Omit/downloads/Omit.apk",
+  "otaUrl": "https://acwac.github.io/Omit/downloads/ota-ui.zip",
   "windowsExeUrl": "https://acwac.github.io/Omit/downloads/Omit-Windows.exe",
-  "notes": "Omit 2.0.0: New Omit brand & logo, ISP Site Unblocker, Who's Spying? Background Vampire Tracker, Play-Games-Safe Smart Context Mode, Clean Open Reader, Android TV 10-foot UI, and Windows 10/11 desktop app."
+  "notes": "Omit 2.4.0: Instant ~90 KB In-App Delta Updates (OTA), Separate Burner Email & SMS OTP tab, and Whole-Home Wi-Fi Shield."
 }

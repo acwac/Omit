@@ -391,6 +391,54 @@ class VellumJsBridge(
     }
 
     @JavascriptInterface
+    fun applyOtaPatch(otaUrl: String, expectedSha256: String, patchCode: Int) {
+        Thread {
+            try {
+                activity.pushToast("Downloading ~90 KB UI patch...")
+                val conn = (java.net.URL(otaUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 15000
+                }
+                val zipBytes = conn.inputStream.readBytes()
+                if (expectedSha256.isNotBlank()) {
+                    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(zipBytes)
+                    val hex = digest.joinToString("") { "%02x".format(it) }
+                    if (!hex.equals(expectedSha256, ignoreCase = true)) {
+                        activity.pushToast("OTA checksum mismatch")
+                        return@Thread
+                    }
+                }
+                val otaDir = java.io.File(activity.filesDir, "ota-ui").apply {
+                    deleteRecursively()
+                    mkdirs()
+                }
+                java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zipBytes)).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        val outFile = java.io.File(otaDir, entry.name)
+                        if (entry.isDirectory) {
+                            outFile.mkdirs()
+                        } else {
+                            outFile.parentFile?.mkdirs()
+                            java.io.FileOutputStream(outFile).use { fos -> zis.copyTo(fos) }
+                        }
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                    }
+                }
+                activity.getSharedPreferences("omit_ota_prefs", android.content.Context.MODE_PRIVATE)
+                    .edit().putInt("patch_code", patchCode).apply()
+                activity.runOnUiThread {
+                    activity.pushToast("Updated! Reloading...")
+                    activity.recreate()
+                }
+            } catch (_: Throwable) {
+                activity.pushToast("OTA update failed")
+            }
+        }.start()
+    }
+
+    @JavascriptInterface
     fun checkUpdateJson(): String {
         return try {
             val url = java.net.URL("https://acwac.github.io/Omit/version.json")
