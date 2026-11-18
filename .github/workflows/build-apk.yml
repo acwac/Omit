@@ -129,6 +129,11 @@ jobs:
           name: Omit-windows
           path: downloads
 
+      - name: Package ota-ui.zip
+        run: |
+          mkdir -p downloads
+          (cd app/src/main/assets/ui && zip -r ../../../../../downloads/ota-ui.zip .)
+
       - name: Commit & Push Website Downloads
         run: |
           git config user.name "github-actions[bot]"
