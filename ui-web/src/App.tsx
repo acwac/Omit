@@ -1604,6 +1604,7 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
   const [smsNums, setSmsNums] = useState<BurnerSmsNum[]>([]);
   const [smsIdx, setSmsIdx] = useState<number>(0);
   const [smsMsgs, setSmsMsgs] = useState<BurnerSmsMsg[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
 
   const copyText = (txt: string, label: string) => {
     if (!txt) return;
@@ -1612,18 +1613,29 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
   };
 
   const loadEmail = (forceNew = false) => {
-    const res = nativeGetBurnerEmail(forceNew);
-    if (res.address) setEmailAddr(res.address);
-    setEmailMsgs(nativeGetBurnerInbox());
+    setLoading(true);
+    setTimeout(() => {
+      const res = nativeGetBurnerEmail(forceNew);
+      if (res.address) setEmailAddr(res.address);
+      else if (res.error) onToast(res.error);
+      setEmailMsgs(nativeGetBurnerInbox());
+      setLoading(false);
+    }, 20);
   };
 
   const loadSms = (idx = smsIdx) => {
-    const nums = smsNums.length ? smsNums : nativeGetBurnerSmsNumbers();
-    if (nums.length) {
-      setSmsNums(nums);
-      const cur = nums[idx % nums.length];
-      setSmsMsgs(nativeGetBurnerSmsMessages(cur.digits));
-    }
+    setLoading(true);
+    setTimeout(() => {
+      const nums = smsNums.length ? smsNums : nativeGetBurnerSmsNumbers();
+      if (nums.length) {
+        setSmsNums(nums);
+        const cur = nums[idx % nums.length];
+        setSmsMsgs(nativeGetBurnerSmsMessages(cur.digits));
+      } else {
+        onToast("Could not load SMS numbers");
+      }
+      setLoading(false);
+    }, 20);
   };
 
   useEffect(() => {
@@ -1646,13 +1658,15 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
 
       {burnerTab === "email" ? (
         <section className="panel" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1, minWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
-              {emailAddr || "Generating inbox..."}
-            </span>
-            {emailAddr && <button type="button" className="pill-btn" onClick={() => copyText(emailAddr, "Email")}>Copy</button>}
-            <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>Refresh</button>
-            <button type="button" className="pill-btn" onClick={() => loadEmail(true)}>New</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, wordBreak: "break-all" }}>
+              {loading && !emailAddr ? "Generating inbox..." : (emailAddr || "Tap New to generate")}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {emailAddr && <button type="button" className="pill-btn" onClick={() => copyText(emailAddr, "Email")}>Copy Email</button>}
+              <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>{loading ? "Checking..." : "Refresh"}</button>
+              <button type="button" className="pill-btn" onClick={() => loadEmail(true)}>New Address</button>
+            </div>
           </div>
           {emailMsgs.length === 0 && <div style={{ fontSize: 13, opacity: 0.65 }}>No emails yet. Tap Refresh to check inbox.</div>}
           {emailMsgs.map((m) => (
@@ -1669,17 +1683,19 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
         </section>
       ) : (
         <section className="panel" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1, minWidth: 160 }}>
-              {smsNums.length ? smsNums[smsIdx % smsNums.length].formatted : "Loading live number..."}
-            </span>
-            {smsNums.length > 0 && (
-              <>
-                <button type="button" className="pill-btn" onClick={() => copyText(smsNums[smsIdx % smsNums.length].formatted, "Number")}>Copy</button>
-                <button type="button" className="pill-btn" onClick={() => { const n = smsIdx + 1; setSmsIdx(n); loadSms(n); }}>Switch</button>
-              </>
-            )}
-            <button type="button" className="pill-btn" onClick={() => loadSms(smsIdx)}>Refresh</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>
+              {loading && smsNums.length === 0 ? "Loading live number..." : (smsNums.length ? smsNums[smsIdx % smsNums.length].formatted : "Tap Refresh to load")}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {smsNums.length > 0 && (
+                <>
+                  <button type="button" className="pill-btn" onClick={() => copyText(smsNums[smsIdx % smsNums.length].formatted, "Number")}>Copy Number</button>
+                  <button type="button" className="pill-btn" onClick={() => { const n = smsIdx + 1; setSmsIdx(n); loadSms(n); }}>Switch Number</button>
+                </>
+              )}
+              <button type="button" className="pill-btn" onClick={() => loadSms(smsIdx)}>{loading ? "Checking..." : "Refresh"}</button>
+            </div>
           </div>
           <div style={{ fontSize: 12, opacity: 0.65 }}>Public inbox—use only for throwaway sign-ups, never banking.</div>
           {smsMsgs.length === 0 && <div style={{ fontSize: 13, opacity: 0.65 }}>No SMS yet. Tap Refresh to check.</div>}
