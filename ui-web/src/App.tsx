@@ -1664,7 +1664,7 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {emailAddr && <button type="button" className="pill-btn" onClick={() => copyText(emailAddr, "Email")}>Copy Email</button>}
-              <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>{loading ? "Checking..." : "Refresh"}</button>
+              <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>{loading ? <span className="omit-spinner" /> : "Refresh"}</button>
               <button type="button" className="pill-btn" onClick={() => loadEmail(true)}>New Address</button>
             </div>
           </div>
