@@ -108,6 +108,14 @@ object HomeShieldServer {
                 outbound.connect(java.net.InetSocketAddress(host, port), 5000)
                 if (method == "CONNECT") {
                     sock.getOutputStream().write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
+                } else {
+                    val sb = StringBuilder(reqLine).append("\r\n")
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        sb.append(line).append("\r\n")
+                        if (line.isEmpty()) break
+                    }
+                    outbound.getOutputStream().write(sb.toString().toByteArray())
                 }
                 val t1 = Thread {
                     try { sock.getInputStream().copyTo(outbound.getOutputStream()) } catch (_: Throwable) {}
