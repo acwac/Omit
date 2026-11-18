@@ -155,6 +155,8 @@ class VellumVpnService : VpnService() {
                 return START_STICKY
             }
             ACTION_RELOAD -> {
+                if (VellumPrefs.homeShieldEnabled) app.omit.shield.net.HomeShieldServer.start(this)
+                else app.omit.shield.net.HomeShieldServer.stop()
                 synchronized(dnsCache) { dnsCache.evictAll() }
                 if (VellumPrefs.shieldState != ShieldState.OFF || VellumPrefs.desiredEnabled) {
                     startOrRebuildTunnel()
