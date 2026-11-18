@@ -354,6 +354,41 @@ class VellumJsBridge(
     }
 
     @JavascriptInterface
+    fun getBurnerEmailJson(forceNew: Boolean): String {
+        return app.omit.shield.net.BurnerManager.getOrCreateEmail(activity, forceNew).toString()
+    }
+
+    @JavascriptInterface
+    fun getBurnerInboxJson(): String {
+        return app.omit.shield.net.BurnerManager.fetchEmailInbox(activity).toString()
+    }
+
+    @JavascriptInterface
+    fun getBurnerSmsNumbersJson(): String {
+        return app.omit.shield.net.BurnerManager.fetchSmsNumbers().toString()
+    }
+
+    @JavascriptInterface
+    fun getBurnerSmsMessagesJson(digits: String): String {
+        return app.omit.shield.net.BurnerManager.fetchSmsMessages(digits).toString()
+    }
+
+    @JavascriptInterface
+    fun setHomeShieldEnabled(enabled: Boolean) {
+        if (enabled) app.omit.shield.net.HomeShieldServer.start(null)
+        else app.omit.shield.net.HomeShieldServer.stop()
+    }
+
+    @JavascriptInterface
+    fun getHomeShieldInfoJson(): String {
+        val o = org.json.JSONObject()
+        o.put("lanIp", app.omit.shield.net.HomeShieldServer.getLanIp())
+        o.put("port", app.omit.shield.net.HomeShieldServer.activePort)
+        o.put("blockedCount", app.omit.shield.net.HomeShieldServer.blockedCount.get())
+        return o.toString()
+    }
+
+    @JavascriptInterface
     fun checkUpdateJson(): String {
         return try {
             val url = java.net.URL("https://acwac.github.io/Omit/version.json")
