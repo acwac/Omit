@@ -53,7 +53,6 @@ object VellumPrefs {
     @Volatile var smartContextMode: Boolean = true
     @Volatile var trapIpEnabled: Boolean = true
     @Volatile var homeShieldEnabled: Boolean = false
-        private set
     @Volatile var antiStormTtl: Boolean = true
         private set
     @Volatile var blockDohCanary: Boolean = true
