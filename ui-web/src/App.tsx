@@ -815,6 +815,7 @@ export default function App() {
       </header>
 
       <main>
+        <TamperBanner />
         {tab === "home" && (
           <>
           <Home
@@ -1695,6 +1696,33 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
           ))}
         </section>
       )}
+    </div>
+  );
+}
+
+function TamperBanner() {
+  const [warn, setWarn] = useState<string>(() => {
+    try {
+      const fn = (window.VellumAndroid as unknown as { getTamperWarning?: () => string })?.getTamperWarning;
+      return fn ? fn() : "";
+    } catch { return ""; }
+  });
+  if (!warn) return null;
+  return (
+    <div style={{
+      background: "#b91c1c",
+      color: "#ffffff",
+      padding: "10px 14px",
+      borderRadius: 14,
+      marginBottom: 12,
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      fontSize: 12.5,
+      fontWeight: 600,
+    }}>
+      <span>{warn}</span>
+      <button type="button" onClick={() => setWarn("")} style={{ background: "transparent", border: "none", color: "#fff", fontWeight: 700, cursor: "pointer" }}>✕</button>
     </div>
   );
 }

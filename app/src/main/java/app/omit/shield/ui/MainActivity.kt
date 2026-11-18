@@ -149,6 +149,7 @@ class MainActivity : Activity() {
         if (createdWebView != null) {
             webView = createdWebView
             setContentView(createdWebView)
+            app.omit.shield.net.WifiTamperGuard.register(this)
             // Always apply system bar appearance AFTER setContentView so DecorView exists on Android 11-16
             applySystemBarAppearance(initialDark)
             createdWebView.loadUrl("$VIRTUAL_ORIGIN/index.html")
