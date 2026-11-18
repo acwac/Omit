@@ -354,6 +354,14 @@ class VellumJsBridge(
     }
 
     @JavascriptInterface
+    fun copyToClipboard(text: String) {
+        try {
+            val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Omit", text))
+        } catch (_: Throwable) {}
+    }
+
+    @JavascriptInterface
     fun getBurnerEmailJson(forceNew: Boolean): String {
         return app.omit.shield.net.BurnerManager.getOrCreateEmail(activity, forceNew).toString()
     }
