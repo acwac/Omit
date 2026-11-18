@@ -97,7 +97,7 @@ object HomeShieldServer {
                     80
                 }
 
-                if (host.isNotBlank() && BlockEngine.evaluate(host, VellumPrefs.activeCategoryMask.get()).isBlocked) {
+                if (host.isNotBlank() && BlockEngine.checkDomain(host).isBlocked) {
                     blockedCount.incrementAndGet()
                     sock.getOutputStream().write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n".toByteArray())
                     return
