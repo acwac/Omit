@@ -1,6 +1,6 @@
 {
-  "version": "2.4.0",
-  "versionCode": 240,
+  "version": "2.4.1",
+  "versionCode": 241,
   "minNativeCode": 230,
   "releasedAt": "2026-11-14",
   "androidApkUrl": "https://acwac.github.io/Omit/downloads/Omit.apk",

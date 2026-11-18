@@ -391,6 +391,11 @@ class VellumJsBridge(
     }
 
     @JavascriptInterface
+    fun getTamperWarning(): String {
+        return app.omit.shield.net.WifiTamperGuard.activeWarning
+    }
+
+    @JavascriptInterface
     fun applyOtaPatch(otaUrl: String, expectedSha256: String, patchCode: Int) {
         Thread {
             try {
