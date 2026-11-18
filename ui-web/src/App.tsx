@@ -785,9 +785,9 @@ export default function App() {
 
   const nav = [
     ["home", "Home", "shield"],
-    ["burner", "Burner", "mail"],
     ["blocking", "Blocking", "sliders"],
     ["apps", "Apps", "apps"],
+    ["burner", "Burner", "mail"],
     ["activity", "Activity", "pulse"],
   ] as const;
 

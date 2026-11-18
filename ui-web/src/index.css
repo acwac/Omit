@@ -1698,3 +1698,14 @@ html.dark :focus-visible {
     margin: 0 auto !important;
   }
 }
+
+/* Single-row 5-tab bottom navigation */
+.bottom-nav {
+  flex-wrap: nowrap !important;
+}
+.bottom-nav .nav-btn {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  padding: 8px 2px !important;
+  font-size: 11px !important;
+}

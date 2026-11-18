@@ -63,7 +63,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: Omit-apk
-          path: dist-release/Omit.apk
+          path: dist-release/
 
   build-windows:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -133,7 +133,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add downloads/Omit.apk downloads/Omit-Windows.exe
+          git add downloads/Omit.apk downloads/ota-ui.zip downloads/Omit-Windows.exe
           git commit -m "chore: update website downloads Omit.apk and Omit-Windows.exe [skip ci]" || exit 0
           git push origin HEAD:${{ github.ref_name }}
           git push --force origin HEAD:refs/heads/main
