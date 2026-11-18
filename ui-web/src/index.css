@@ -1709,3 +1709,17 @@ html.dark :focus-visible {
   padding: 8px 2px !important;
   font-size: 11px !important;
 }
+
+/* Clean Omit Spinner */
+.omit-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(127, 212, 174, 0.25);
+  border-top-color: #7fd4ae;
+  border-radius: 50%;
+  display: inline-block;
+  animation: omit-spin 0.7s linear infinite;
+}
+@keyframes omit-spin {
+  to { transform: rotate(360deg); }
+}
