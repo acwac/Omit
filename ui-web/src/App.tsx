@@ -517,7 +517,6 @@ export default function App() {
     }
     if (window.OmitAndroid) {
       window.OmitAndroid.selectIntensity(index);
-      return;
     }
     const nextCats =
       index === 0
