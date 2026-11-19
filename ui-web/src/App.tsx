@@ -534,7 +534,6 @@ export default function App() {
   const handleToggleCategory = (index: number) => {
     if (window.OmitAndroid) {
       window.OmitAndroid.toggleCategory(index);
-      return;
     }
     setState((cur) => {
       const nextCats = cur.categories.map((v, i) => (i === index ? !v : v));
@@ -549,7 +548,6 @@ export default function App() {
   const handleToggleEngine = (index: number) => {
     if (window.OmitAndroid) {
       window.OmitAndroid.toggleEngine(index);
-      return;
     }
     setState((cur) => ({
       ...cur,
