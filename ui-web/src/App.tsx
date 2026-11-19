@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+if (typeof window !== "undefined" && window.VellumAndroid && !window.OmitAndroid) {
+  window.OmitAndroid = window.VellumAndroid;
+}
 import {
   formatCompactCount,
   isAndroidRuntime,
