@@ -178,8 +178,8 @@ main {
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   backdrop-filter: blur(18px);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  padding: 7px max(8px, calc((100vw - 560px) / 2)) 10px;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 7px max(4px, calc((100vw - 560px) / 2)) 10px;
 }
 
 .bottom-nav button {
