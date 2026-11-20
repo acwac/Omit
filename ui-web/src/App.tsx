@@ -1609,9 +1609,44 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
 
   const copyText = (txt: string, label: string) => {
     if (!txt) return;
+    try {
+      const fn = (window.VellumAndroid as unknown as { copyToClipboard?: (t: string) => void })?.copyToClipboard;
+      if (fn) fn(txt);
+    } catch { /* ignore */ }
     navigator.clipboard?.writeText(txt).catch(() => {});
     onToast(`${label} copied`);
   };
+
+  useEffect(() => {
+    (window as unknown as { __onBurnerData?: (raw: string) => void }).__onBurnerData = (raw: string) => {
+      try {
+        const d = JSON.parse(raw);
+        if (d.type === "email") {
+          if (d.email?.address) setEmailAddr(d.email.address);
+          else if (d.email?.error) onToast(d.email.error);
+          if (Array.isArray(d.inbox)) setEmailMsgs(d.inbox);
+          setLoading(false);
+        } else if (d.type === "smsNumbers") {
+          if (Array.isArray(d.numbers) && d.numbers.length) {
+            setSmsNums(d.numbers);
+            const cur = d.numbers[smsIdx % d.numbers.length];
+            const fn = (window.VellumAndroid as unknown as { fetchBurnerSmsMessagesAsync?: (s: string) => void })?.fetchBurnerSmsMessagesAsync;
+            if (fn) fn(cur.digits);
+          } else {
+            setLoading(false);
+          }
+        } else if (d.type === "smsMessages") {
+          if (Array.isArray(d.messages)) setSmsMsgs(d.messages);
+          setLoading(false);
+        }
+      } catch {
+        setLoading(false);
+      }
+    };
+    return () => {
+      delete (window as unknown as { __onBurnerData?: (raw: string) => void }).__onBurnerData;
+    };
+  }, [smsIdx]);
 
   const loadEmail = (forceNew = false) => {
     setLoading(true);
