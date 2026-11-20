@@ -374,7 +374,7 @@ class VellumJsBridge(
             val payload = JSONObject().put("type", "email").put("email", emailObj).put("inbox", inboxArr).toString()
             val escaped = JSONObject.quote(payload)
             activity.runOnUiThread {
-                webView.evaluateJavascript("window.__onBurnerData && window.__onBurnerData($escaped)", null)
+                activity.evalJs("window.__onBurnerData && window.__onBurnerData($escaped)")
             }
         }
     }
@@ -386,7 +386,7 @@ class VellumJsBridge(
             val payload = JSONObject().put("type", "smsNumbers").put("numbers", arr).toString()
             val escaped = JSONObject.quote(payload)
             activity.runOnUiThread {
-                webView.evaluateJavascript("window.__onBurnerData && window.__onBurnerData($escaped)", null)
+                activity.evalJs("window.__onBurnerData && window.__onBurnerData($escaped)")
             }
         }
     }
@@ -398,7 +398,7 @@ class VellumJsBridge(
             val payload = JSONObject().put("type", "smsMessages").put("digits", digits).put("messages", arr).toString()
             val escaped = JSONObject.quote(payload)
             activity.runOnUiThread {
-                webView.evaluateJavascript("window.__onBurnerData && window.__onBurnerData($escaped)", null)
+                activity.evalJs("window.__onBurnerData && window.__onBurnerData($escaped)")
             }
         }
     }
