@@ -357,6 +357,14 @@ class MainActivity : Activity() {
         }
     }
 
+    fun evalJs(js: String) {
+        mainHandler.post {
+            try {
+                webView?.evaluateJavascript(js, null)
+            } catch (_: Throwable) {}
+        }
+    }
+
     fun pushCurrentState() {
         val wv = webView ?: return
         if (!pageReady) return
