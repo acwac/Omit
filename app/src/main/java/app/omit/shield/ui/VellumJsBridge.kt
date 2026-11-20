@@ -367,6 +367,43 @@ class VellumJsBridge(
     }
 
     @JavascriptInterface
+    fun fetchBurnerEmailAsync(forceNew: Boolean) {
+        bgPool.execute {
+            val emailObj = app.omit.shield.net.BurnerManager.getOrCreateEmail(activity, forceNew)
+            val inboxArr = app.omit.shield.net.BurnerManager.fetchEmailInbox(activity)
+            val payload = JSONObject().put("type", "email").put("email", emailObj).put("inbox", inboxArr).toString()
+            val escaped = JSONObject.quote(payload)
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window.__onBurnerData && window.__onBurnerData($escaped)", null)
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun fetchBurnerSmsNumbersAsync() {
+        bgPool.execute {
+            val arr = app.omit.shield.net.BurnerManager.fetchSmsNumbers()
+            val payload = JSONObject().put("type", "smsNumbers").put("numbers", arr).toString()
+            val escaped = JSONObject.quote(payload)
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window.__onBurnerData && window.__onBurnerData($escaped)", null)
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun fetchBurnerSmsMessagesAsync(digits: String) {
+        bgPool.execute {
+            val arr = app.omit.shield.net.BurnerManager.fetchSmsMessages(digits)
+            val payload = JSONObject().put("type", "smsMessages").put("digits", digits).put("messages", arr).toString()
+            val escaped = JSONObject.quote(payload)
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window.__onBurnerData && window.__onBurnerData($escaped)", null)
+            }
+        }
+    }
+
+    @JavascriptInterface
     fun getBurnerInboxJson(): String {
         return app.omit.shield.net.BurnerManager.fetchEmailInbox(activity).toString()
     }
