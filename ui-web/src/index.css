@@ -183,6 +183,12 @@ main {
 }
 
 .bottom-nav button {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 6px 2px;
+  font-size: 10.5px;
   color: var(--muted);
   display: flex;
   flex-direction: column;
