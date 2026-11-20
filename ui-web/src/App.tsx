@@ -1693,7 +1693,12 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
   useEffect(() => {
     if (burnerTab === "email" && !emailAddr) loadEmail(false);
     if (burnerTab === "sms" && smsNums.length === 0) loadSms(0);
-  }, [burnerTab]);
+    const timer = setInterval(() => {
+      if (burnerTab === "email") loadEmail(false);
+      else loadSms(smsIdx);
+    }, 6000);
+    return () => clearInterval(timer);
+  }, [burnerTab, smsIdx]);
 
   return (
     <div className="page">
