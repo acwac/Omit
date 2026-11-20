@@ -1551,6 +1551,10 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
 
   const copyText = (txt: string, label: string) => {
     if (!txt) return;
+    try {
+      const fn = (window.VellumAndroid as unknown as { copyToClipboard?: (t: string) => void })?.copyToClipboard;
+      if (fn) fn(txt);
+    } catch { /* ignore */ }
     navigator.clipboard?.writeText(txt).catch(() => {});
     onToast(`${label} copied`);
   };
@@ -1560,15 +1564,15 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
     setHomeOn(next);
     nativeSetHomeShield(next);
     setHomeInfo(nativeGetHomeShieldInfo());
-    onToast(next ? "Whole-Home Wi-Fi Shield active" : "Whole-Home Wi-Fi Shield off");
+    onToast(next ? "Share Ad-Block to Wi-Fi active" : "Share Ad-Block to Wi-Fi off");
   };
 
   return (
     <section className="section">
       <div className="panel">
-        <div className="row-item" style={{ borderBottom: homeOn ? "1px solid var(--border)" : "none" }}>
-          <div className="row-copy">
-            <strong>Whole-Home Wi-Fi Shield</strong>
+        <div className="row-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: 10, borderBottom: homeOn ? "1px solid var(--border)" : "none" }}>
+          <div className="row-copy" style={{ width: "100%" }}>
+            <strong>Share Ad-Block to Wi-Fi</strong>
             <span>Protect TVs, consoles &amp; iPhones on this Wi-Fi</span>
           </div>
           <button
