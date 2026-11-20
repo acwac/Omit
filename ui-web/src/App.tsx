@@ -1650,6 +1650,11 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
 
   const loadEmail = (forceNew = false) => {
     setLoading(true);
+    const asyncFn = (window.VellumAndroid as unknown as { fetchBurnerEmailAsync?: (f: boolean) => void })?.fetchBurnerEmailAsync;
+    if (asyncFn) {
+      asyncFn(forceNew);
+      return;
+    }
     setTimeout(() => {
       const res = nativeGetBurnerEmail(forceNew);
       if (res.address) setEmailAddr(res.address);
@@ -1661,6 +1666,17 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
 
   const loadSms = (idx = smsIdx) => {
     setLoading(true);
+    const asyncNums = (window.VellumAndroid as unknown as { fetchBurnerSmsNumbersAsync?: () => void })?.fetchBurnerSmsNumbersAsync;
+    const asyncMsgs = (window.VellumAndroid as unknown as { fetchBurnerSmsMessagesAsync?: (d: string) => void })?.fetchBurnerSmsMessagesAsync;
+    if (smsNums.length && asyncMsgs) {
+      const cur = smsNums[idx % smsNums.length];
+      asyncMsgs(cur.digits);
+      return;
+    }
+    if (asyncNums) {
+      asyncNums();
+      return;
+    }
     setTimeout(() => {
       const nums = smsNums.length ? smsNums : nativeGetBurnerSmsNumbers();
       if (nums.length) {
