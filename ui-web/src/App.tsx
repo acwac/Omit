@@ -845,7 +845,9 @@ export default function App() {
         )}
 
         {tab === "burner" && (
-          <BurnerScreen onToast={setToast} />
+          <BurnerErrorBoundary>
+            <BurnerScreen onToast={setToast} />
+          </BurnerErrorBoundary>
         )}
 
         {tab === "blocking" && (
