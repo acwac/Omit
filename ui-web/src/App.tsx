@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 if (typeof window !== "undefined" && window.VellumAndroid && !window.OmitAndroid) {
   window.OmitAndroid = window.VellumAndroid;
@@ -1600,6 +1600,29 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
       </div>
     </section>
   );
+}
+
+class BurnerErrorBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
+  state = { err: null as string | null };
+  static getDerivedStateFromError(error: unknown) {
+    return { err: error instanceof Error ? error.message : String(error) };
+  }
+  render() {
+    if (this.state.err) {
+      return (
+        <div className="page">
+          <div className="panel" style={{ padding: 16 }}>
+            <strong>Burner Error</strong>
+            <p style={{ fontSize: 13, opacity: 0.8, marginTop: 6 }}>{this.state.err}</p>
+            <button type="button" className="pill-btn" style={{ marginTop: 10 }} onClick={() => this.setState({ err: null })}>
+              Retry
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
