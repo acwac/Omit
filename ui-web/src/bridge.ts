@@ -76,8 +76,6 @@ export interface NativeBridge {
   clearLogs(): void;
   openPrivateDnsSettings(): void;
   isTvMode?(): boolean;
-  setIspUnblockEnabled?(enabled: boolean): void;
-  setSmartContextMode?(enabled: boolean): void;
   getSpyStatsJson?(): string;
   openExternalUrl?(url: string): void;
   copyToClipboard?(text: string): void;
@@ -103,6 +101,8 @@ export interface UpdateInfo {
   versionCode: number;
   notes: string;
   apkUrl: string;
+  /** Windows installer; the platform field is named differently in version.json. */
+  windowsExeUrl: string;
   otaUrl: string;
   otaSha256: string;
   otaCode: number;
@@ -180,7 +180,7 @@ const DEFAULT_FALLBACK_STATE: OmitStateSnapshot = {
   offlineGameCount: 0,
   blockedCount: 0,
   totalQueries: 0,
-  activeRules: 209332,
+  activeRules: 0,
   privateDnsHost: "",
   allowDomains: [],
   blockDomains: [],
@@ -190,12 +190,6 @@ const DEFAULT_FALLBACK_STATE: OmitStateSnapshot = {
   recentBlocked: [],
   logs: [],
 };
-
-const DEFAULT_FALLBACK_APPS: InstalledAppItem[] = [
-  { pkg: "com.android.chrome", name: "Chrome", initials: "C", color: "#3f9875", isSystem: false, mode: "Protected" },
-  { pkg: "com.spotify.music", name: "Spotify", initials: "S", color: "#419b64", isSystem: false, mode: "Protected" },
-  { pkg: "com.google.android.youtube", name: "YouTube", initials: "YT", color: "#db5a51", isSystem: false, mode: "Protected" },
-];
 
 /** In-memory mirror of the demo state so the browser preview stays interactive. */
 let localState: OmitStateSnapshot | null = null;
@@ -232,7 +226,8 @@ export function readInitialApps(): InstalledAppItem[] {
       return [];
     }
   }
-  return isWindowsRuntime() ? [] : DEFAULT_FALLBACK_APPS.map((app) => ({ ...app }));
+  // Only the Android shell can enumerate packages; never invent an app list.
+  return [];
 }
 
 export interface SpyStatItem {
@@ -381,15 +376,15 @@ export function nativeGetHomeShieldInfo(): HomeShieldInfo {
       const parsed = JSON.parse(raw) as Partial<HomeShieldInfo> & { enabled?: boolean };
       return {
         enabled: Boolean(parsed.enabled),
-        lanIp: parsed.lanIp || "192.168.1.10",
-        port: parsed.port || 8080,
+        lanIp: parsed.lanIp || "",
+        port: parsed.port || 0,
         blockedCount: parsed.blockedCount ?? 0,
       };
     }
   } catch {
     /* ignore */
   }
-  return { enabled: false, lanIp: "192.168.1.10", port: 8080, blockedCount: 0 };
+  return { enabled: false, lanIp: "", port: 0, blockedCount: 0 };
 }
 
 export function nativeGetTamperWarning(): string {
@@ -495,6 +490,7 @@ export function normalizeUpdateInfo(raw: Record<string, unknown> | null | undefi
     versionCode,
     notes: String(android.notes ?? raw.notes ?? ""),
     apkUrl: String(android.apkUrl ?? raw.androidApkUrl ?? ""),
+    windowsExeUrl: String(raw.windowsExeUrl ?? ""),
     otaUrl: String(android.otaUrl ?? raw.otaUrl ?? ""),
     otaSha256: String(android.otaSha256 ?? raw.otaSha256 ?? ""),
     otaCode: Number(android.otaCode ?? raw.otaCode ?? versionCode),
@@ -518,7 +514,8 @@ export function downloadAndInstallUpdate(info: UpdateInfo): void {
   }
   const invoke = tauriInvoke();
   if (invoke) {
-    void invoke("download_and_install_update", { exeUrl: info.apkUrl }).catch(() => undefined);
+    const installer = info.windowsExeUrl || info.apkUrl;
+    void invoke("download_and_install_update", { exeUrl: installer }).catch(() => undefined);
     return;
   }
 
@@ -633,6 +630,61 @@ export async function getWindowsRules(): Promise<{ allow: string[]; block: strin
   try {
     const [allow, block] = await invoke<[string[], string[]]>("get_windows_rules");
     return { allow: allow ?? [], block: block ?? [] };
+  } catch {
+    return null;
+  }
+}
+
+/** Full Windows engine state, shaped exactly like Android's getStateJson. */
+export async function windowsState(): Promise<Partial<OmitStateSnapshot> | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    return await invoke<Partial<OmitStateSnapshot>>("get_windows_state");
+  } catch {
+    return null;
+  }
+}
+
+/** Selects an encrypted resolver on Windows (index 4 = custom DoH). */
+export async function setWindowsDns(index: number, customUrl: string): Promise<boolean> {
+  const invoke = tauriInvoke();
+  if (!invoke) return false;
+  try {
+    return await invoke<boolean>("set_windows_dns", { index, customUrl });
+  } catch {
+    return false;
+  }
+}
+
+/** Flips one of the five engine switches and persists it. */
+export async function setWindowsEngine(key: string, enabled: boolean): Promise<boolean> {
+  const invoke = tauriInvoke();
+  if (!invoke) return false;
+  try {
+    return await invoke<boolean>("set_windows_engine", { key, enabled });
+  } catch {
+    return false;
+  }
+}
+
+/** Removes a domain from both the allow and block sets. */
+export async function clearWindowsRule(domain: string): Promise<boolean> {
+  const invoke = tauriInvoke();
+  if (!invoke) return false;
+  try {
+    return await invoke<boolean>("clear_windows_rule", { domain });
+  } catch {
+    return false;
+  }
+}
+
+/** True while every adapter still points at Omit's loopback resolver. */
+export async function windowsDnsLock(): Promise<boolean | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    return await invoke<boolean>("get_windows_dns_lock");
   } catch {
     return null;
   }

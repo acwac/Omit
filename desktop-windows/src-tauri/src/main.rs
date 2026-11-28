@@ -3,7 +3,7 @@
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
@@ -34,6 +34,28 @@ const BLOCKLIST_FILE: &str = "omit_starter.vbin";
 const VELLUM_MAGIC: &[u8; 8] = b"VELLUM01";
 const UPSTREAM_DNS: &str = "8.8.8.8:53";
 const UPSTREAM_DNS_ALT: &str = "1.1.1.1:53";
+
+/// Encrypted resolvers offered in the UI, in the same order as Android's
+/// FilterMetadata.UPSTREAMS. Index 4 is the user supplied custom endpoint.
+const DOH_UPSTREAMS: [(&str, &str); 5] = [
+    ("https://dns.google/dns-query", "8.8.8.8:53"),
+    ("https://cloudflare-dns.com/dns-query", "1.1.1.1:53"),
+    ("https://dns.quad9.net/dns-query", "9.9.9.9:53"),
+    ("https://dns.adguard-dns.com/dns-query", "94.140.14.140:53"),
+    ("", "8.8.8.8:53"),
+];
+
+/// Engine toggles, mirroring the five switches the shared UI renders.
+static CNAME_UNCLOAK: AtomicBool = AtomicBool::new(true);
+static ANTI_STORM_TTL: AtomicBool = AtomicBool::new(true);
+static DOH_CANARY: AtomicBool = AtomicBool::new(true);
+static START_WITH_WINDOWS: AtomicBool = AtomicBool::new(true);
+static CAPTIVE_FALLBACK: AtomicBool = AtomicBool::new(true);
+/// Index into DOH_UPSTREAMS; 4 means "use the custom URL".
+static DNS_INDEX: AtomicU64 = AtomicU64::new(0);
+static CUSTOM_DOH_URL: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+/// Path of settings.json, resolved once at startup.
+static SETTINGS_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Blocklist: the same 64-bit sorted hash + 8-bit category table the APK uses.
@@ -247,7 +269,9 @@ fn build_blocked_response(query: &[u8], qname_end: usize) -> Option<Vec<u8>> {
         out.extend_from_slice(&[0xC0, 0x0C]); // pointer to qname
         out.extend_from_slice(&qtype.to_be_bytes());
         out.extend_from_slice(&[0x00, 0x01]); // IN
-        out.extend_from_slice(&60u32.to_be_bytes()); // 60s TTL (anti retry storm)
+        // A long TTL stops apps re-querying the same blocked host (retry storm).
+        let ttl: u32 = if ANTI_STORM_TTL.load(Ordering::Relaxed) { 300 } else { 15 };
+        out.extend_from_slice(&ttl.to_be_bytes());
         if qtype == 1 {
             out.extend_from_slice(&[0x00, 0x04, 0x00, 0x00, 0x00, 0x00]);
         } else {
@@ -281,6 +305,143 @@ fn forward_query(query: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// Encrypted upstream (DNS over HTTPS, RFC 8484)
+// ---------------------------------------------------------------------------
+
+/// The resolver the UI currently has selected; falls back to Google DNS.
+fn active_doh_url() -> String {
+    let index = DNS_INDEX.load(Ordering::Relaxed) as usize;
+    if index == 4 {
+        let custom = CUSTOM_DOH_URL
+            .lock()
+            .map(|u| u.clone())
+            .unwrap_or_default();
+        if custom.starts_with("https://") {
+            return custom;
+        }
+        return DOH_UPSTREAMS[0].0.to_string();
+    }
+    DOH_UPSTREAMS
+        .get(index)
+        .map(|(url, _)| url.to_string())
+        .unwrap_or_else(|| DOH_UPSTREAMS[0].0.to_string())
+}
+
+/// RFC 8484 POST query. Returns the raw DNS answer, or None so the caller can
+/// fall back to plain DNS rather than breaking the user's network.
+fn query_doh(query: &[u8]) -> Option<Vec<u8>> {
+    let url = active_doh_url();
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(2500))
+        .build()
+        .ok()?;
+    let response = client
+        .post(&url)
+        .header("content-type", "application/dns-message")
+        .header("accept", "application/dns-message")
+        .body(query.to_vec())
+        .send()
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body = response.bytes().ok()?;
+    if body.len() < 12 {
+        return None;
+    }
+    // Answers can arrive with a different transaction id; align it with the query.
+    let mut out = body.to_vec();
+    out[0] = query[0];
+    out[1] = query[1];
+    Some(out)
+}
+
+/// Encrypted first, then plain DNS so a broken resolver never bricks browsing.
+fn resolve_upstream(query: &[u8]) -> Option<Vec<u8>> {
+    query_doh(query).or_else(|| {
+        // Plain DNS is only a safety net; it can be switched off so every lookup
+        // stays encrypted even when the chosen resolver is unreachable.
+        if CAPTIVE_FALLBACK.load(Ordering::Relaxed) {
+            forward_query(query)
+        } else {
+            None
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Persisted settings (survive restarts, like Android's SharedPreferences)
+// ---------------------------------------------------------------------------
+
+fn persist_settings(table: &BlockTable, rules: &RuleSets) {
+    let Some(path) = SETTINGS_PATH.get() else {
+        return;
+    };
+    let mask = ACTIVE_MASK.load(Ordering::Relaxed) as u8;
+    let mut allow: Vec<&String> = rules.allow.iter().collect();
+    allow.sort();
+    let mut block: Vec<&String> = rules.block.iter().collect();
+    block.sort();
+    let doc = serde_json::json!({
+        "version": 1,
+        "shieldActive": SHIELD_ACTIVE.load(Ordering::Relaxed),
+        "mask": mask,
+        "dnsIndex": DNS_INDEX.load(Ordering::Relaxed),
+        "customDohUrl": CUSTOM_DOH_URL.lock().map(|u| u.clone()).unwrap_or_default(),
+        "cnameUncloak": CNAME_UNCLOAK.load(Ordering::Relaxed),
+        "antiStormTtl": ANTI_STORM_TTL.load(Ordering::Relaxed),
+        "dohCanary": DOH_CANARY.load(Ordering::Relaxed),
+        "startWithWindows": START_WITH_WINDOWS.load(Ordering::Relaxed),
+        "allow": allow,
+        "block": block,
+        "_rules": table.hashes.len(),
+    });
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, doc.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+fn load_settings(path: &PathBuf, rules: &mut RuleSets) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+    let mask = doc.get("mask").and_then(|v| v.as_u64()).unwrap_or(MASK_BALANCED as u64) as u8;
+    ACTIVE_MASK.store((mask & MASK_STRICT) as u64, Ordering::Relaxed);
+    let dns = doc.get("dnsIndex").and_then(|v| v.as_u64()).unwrap_or(0);
+    DNS_INDEX.store(dns.min(4), Ordering::Relaxed);
+    if let Some(url) = doc.get("customDohUrl").and_then(|v| v.as_str()) {
+        if let Ok(mut custom) = CUSTOM_DOH_URL.lock() {
+            *custom = url.to_string();
+        }
+    }
+    let flag = |key: &str, default: bool| {
+        doc.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+    };
+    CNAME_UNCLOAK.store(flag("cnameUncloak", true), Ordering::Relaxed);
+    ANTI_STORM_TTL.store(flag("antiStormTtl", true), Ordering::Relaxed);
+    DOH_CANARY.store(flag("dohCanary", true), Ordering::Relaxed);
+    START_WITH_WINDOWS.store(flag("startWithWindows", true), Ordering::Relaxed);
+    for key in ["allow", "block"] {
+        if let Some(items) = doc.get(key).and_then(|v| v.as_array()) {
+            let set = if key == "allow" { &mut rules.allow } else { &mut rules.block };
+            for item in items {
+                if let Some(domain) = item.as_str() {
+                    set.insert(domain.to_string());
+                }
+            }
+        }
+    }
+}
+
+
 #[derive(Clone)]
 struct LogEntry {
     id: u64,
@@ -293,7 +454,7 @@ struct LogEntry {
 fn category_label(mask: u8) -> &'static str {
     match mask {
         0 => "Custom rule",
-        m if m & 0x01 != 0 => "Game & Store Ads",
+        m if m & 0x01 != 0 => "Game & In-App Ads",
         m if m & 0x02 != 0 => "Web Banners & Popups",
         m if m & 0x04 != 0 => "Cross-App Trackers",
         m if m & 0x08 != 0 => "Malware & Scam Shield",
@@ -330,6 +491,16 @@ fn serve_query(table: &Arc<BlockTable>, rules: &RuleSets, query: &[u8]) -> Optio
         None => return None,
     };
     let mask = ACTIVE_MASK.load(Ordering::Relaxed) as u8;
+    // Type 65 (HTTPS/SVCB) carries the browser's DoH/ECH settings. Stripping it
+    // keeps encrypted-DNS-capable browsers going through the system resolver.
+    if DOH_CANARY.load(Ordering::Relaxed) && qname_end + 2 <= query.len() {
+        let qtype = u16::from_be_bytes([query[qname_end], query[qname_end + 1]]);
+        if qtype == 65 {
+            BLOCKED_QUERIES.fetch_add(1, Ordering::Relaxed);
+            push_log(&qname, "Browser DNS Guard", true);
+            return build_blocked_response(query, qname_end);
+        }
+    }
     match table.verdict(&qname, mask, rules) {
         Verdict::Blocked(hit) => {
             BLOCKED_QUERIES.fetch_add(1, Ordering::Relaxed);
@@ -337,7 +508,7 @@ fn serve_query(table: &Arc<BlockTable>, rules: &RuleSets, query: &[u8]) -> Optio
             build_blocked_response(query, qname_end)
         }
         Verdict::Allow => {
-            let answer = forward_query(query);
+            let answer = resolve_upstream(query);
             if answer.is_some() {
                 push_log(&qname, "Upstream", false);
             }
@@ -493,6 +664,73 @@ fn is_elevated() -> bool {
     false
 }
 
+/// Registers or removes the per-user Run entry behind "Start with Windows".
+fn apply_start_with_windows(enabled: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(_) => return,
+        };
+        let quoted = format!("\"{}\"", exe.display());
+        let script = if enabled {
+            format!(
+                "New-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+                 -Name 'Omit' -Value '{}' -PropertyType String -Force | Out-Null",
+                quoted.replace('\'', "''")
+            )
+        } else {
+            "Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+             -Name 'Omit' -ErrorAction SilentlyContinue"
+                .to_string()
+        };
+        let _ = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
+    }
+}
+
+/// True when every active adapter points at Omit's loopback resolver.
+#[cfg(target_os = "windows")]
+fn windows_dns_locked() -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object { \
+               $dns = Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue; \
+               if (-not ($dns.ServerAddresses -contains '127.0.0.1')) { Write-Output 'unlocked' } }",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).contains("unlocked"))
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_dns_locked() -> bool {
+    false
+}
+
 fn blocklist_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     // Bundled resource first, then the path next to the executable (portable builds).
     if let Ok(resource) = app.path().resource_dir() {
@@ -579,14 +817,16 @@ fn relative_time(at_ms: u64) -> String {
     }
 }
 
-#[tauri::command]
-fn get_windows_logs() -> Vec<LogJson> {
+/// Recent DNS decisions, newest first, for both the Activity tab and the
+/// Home screen's "Recently blocked" list.
+fn log_rows(limit: usize) -> Vec<LogJson> {
     let ring = match LOG_RING.lock() {
         Ok(ring) => ring,
         Err(poisoned) => poisoned.into_inner(),
     };
     ring.iter()
         .rev()
+        .take(limit)
         .map(|e| LogJson {
             id: e.id,
             domain: e.domain.clone(),
@@ -595,6 +835,43 @@ fn get_windows_logs() -> Vec<LogJson> {
             category: e.category.clone(),
         })
         .collect()
+}
+
+#[tauri::command]
+fn get_windows_logs() -> Vec<LogJson> {
+    log_rows(LOG_CAPACITY)
+}
+
+#[derive(serde::Serialize)]
+struct RecentBlockedJson {
+    domain: String,
+    category: String,
+    time: String,
+}
+
+/// The three most recent distinct blocked domains, matching Android's
+/// buildStateJson so the Home screen looks identical on both platforms.
+#[tauri::command]
+fn get_windows_recent_blocked() -> Vec<RecentBlockedJson> {
+    let ring = match LOG_RING.lock() {
+        Ok(ring) => ring,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut out: Vec<RecentBlockedJson> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in ring.iter().rev() {
+        if !entry.blocked || out.len() >= 3 {
+            break;
+        }
+        if seen.insert(entry.domain.clone()) {
+            out.push(RecentBlockedJson {
+                domain: entry.domain.clone(),
+                category: entry.category.clone(),
+                time: relative_time(entry.at_ms),
+            });
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -644,11 +921,19 @@ fn toggle_windows_shield(enable: bool, state: tauri::State<AppState>) -> bool {
         }
         set_windows_local_dns();
         SHIELD_ACTIVE.store(true, Ordering::SeqCst);
+        {
+            let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
+            persist_settings(&state.table, &rules);
+        }
         true
     } else {
         SHIELD_ACTIVE.store(false, Ordering::SeqCst);
         restore_windows_dns();
         stop_dns_sinkhole();
+        {
+            let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
+            persist_settings(&state.table, &rules);
+        }
         false
     }
 }
@@ -667,29 +952,105 @@ fn set_windows_categories(mask: Option<u8>, toggle_index: Option<u8>) -> u8 {
     next
 }
 
+/// Category changes go through here so the mask is saved with the rest.
+#[tauri::command]
+fn set_windows_categories_persisted(
+    mask: Option<u8>,
+    toggle_index: Option<u8>,
+    state: tauri::State<AppState>,
+) -> u8 {
+    let next = set_windows_categories(mask, toggle_index);
+    let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
+    persist_settings(&state.table, &rules);
+    next
+}
+
 #[tauri::command]
 fn set_windows_rules(domain: String, mode: String, state: tauri::State<AppState>) -> bool {
     let clean = domain.trim().trim_end_matches('.').to_ascii_lowercase();
     if clean.len() < 3 || !clean.contains('.') {
         return false;
     }
+    {
+        let mut rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
+        match mode.as_str() {
+            "allow" => {
+                rules.block.remove(&clean);
+                rules.allow.insert(clean);
+            }
+            "block" => {
+                rules.allow.remove(&clean);
+                rules.block.insert(clean);
+            }
+            "clear" => {
+                rules.allow.remove(&clean);
+                rules.block.remove(&clean);
+            }
+            _ => return false,
+        }
+        persist_settings(&state.table, &rules);
+    }
+    true
+}
+
+/// Removes a domain from both rule sets, like Android's removeCustomRuleForDomain.
+#[tauri::command]
+fn clear_windows_rule(domain: String, state: tauri::State<AppState>) -> bool {
+    let clean = domain.trim().trim_end_matches('.').to_ascii_lowercase();
     let mut rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
-    match mode.as_str() {
-        "allow" => {
-            rules.block.remove(&clean);
-            rules.allow.insert(clean);
+    let removed = rules.allow.remove(&clean) | rules.block.remove(&clean);
+    persist_settings(&state.table, &rules);
+    removed
+}
+
+/// Selects an encrypted resolver (index 4 = custom DoH URL).
+#[tauri::command]
+fn set_windows_dns(index: u8, custom_url: Option<String>) -> bool {
+    if index > 4 {
+        return false;
+    }
+    if index == 4 {
+        let url = custom_url.unwrap_or_default().trim().to_string();
+        if !url.starts_with("https://") || url.len() < 12 {
+            return false;
         }
-        "block" => {
-            rules.allow.remove(&clean);
-            rules.block.insert(clean);
+        if let Ok(mut custom) = CUSTOM_DOH_URL.lock() {
+            *custom = url;
         }
-        "clear" => {
-            rules.allow.remove(&clean);
-            rules.block.remove(&clean);
+    }
+    DNS_INDEX.store(index as u64, Ordering::Relaxed);
+    true
+}
+
+/// The five engine switches rendered by the shared Blocking screen.
+#[tauri::command]
+fn set_windows_engine(key: String, enabled: bool, state: tauri::State<AppState>) -> bool {
+    match key.as_str() {
+        "cname_uncloak" => CNAME_UNCLOAK.store(enabled, Ordering::Relaxed),
+        "anti_storm_ttl" => ANTI_STORM_TTL.store(enabled, Ordering::Relaxed),
+        "block_doh_canary" => DOH_CANARY.store(enabled, Ordering::Relaxed),
+        "captive_portal_fallback" => {
+            // Included so the shared five-row list stays honest: on Windows this
+            // only controls whether upstream failures fall through to plain DNS.
+            CAPTIVE_FALLBACK.store(enabled, Ordering::Relaxed)
+        }
+        "start_on_boot" => {
+            START_WITH_WINDOWS.store(enabled, Ordering::Relaxed);
+            apply_start_with_windows(enabled);
         }
         _ => return false,
     }
+    let table = Arc::clone(&state.table);
+    let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
+    persist_settings(&table, &rules);
     true
+}
+
+/// Windows has no Android-style private-DNS warning; the card asks for the
+/// real conflict state instead of a placeholder string.
+#[tauri::command]
+fn get_windows_dns_conflict() -> String {
+    String::new()
 }
 
 #[tauri::command]
@@ -700,6 +1061,452 @@ fn get_windows_rules(state: tauri::State<AppState>) -> (Vec<String>, Vec<String>
     allow.sort();
     block.sort();
     (allow, block)
+}
+
+// ---------------------------------------------------------------------------
+// Burner email / SMS (same providers as the Android BurnerManager)
+// ---------------------------------------------------------------------------
+
+fn burner_path() -> Option<PathBuf> {
+    SETTINGS_PATH.get().map(|p| p.with_file_name("burner.json"))
+}
+
+fn burner_load() -> serde_json::Value {
+    burner_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn burner_save(doc: &serde_json::Value) {
+    if let Some(path) = burner_path() {
+        let _ = std::fs::write(path, doc.to_string());
+    }
+}
+
+fn http_get(url: &str, bearer: Option<&str>) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(9000))
+        .user_agent("Mozilla/5.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut request = client.get(url).header("accept", "application/json,text/html,*/*");
+    if let Some(token) = bearer {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().map_err(|e| e.to_string())?;
+    response.text().map_err(|e| e.to_string())
+}
+
+fn http_post_json(url: &str, body: &serde_json::Value) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(9000))
+        .user_agent("Mozilla/5.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .post(url)
+        .header("content-type", "application/json")
+        .json(body)
+        .send()
+        .map_err(|e| e.to_string())?;
+    response.text().map_err(|e| e.to_string())
+}
+
+/// First run of 4..=8 digits, matching the Android OTP_REGEX.
+fn extract_otp(text: &str) -> String {
+    let mut run_start: Option<usize> = None;
+    let bytes = text.as_bytes();
+    for (i, ch) in text.char_indices() {
+        if ch.is_ascii_digit() {
+            if run_start.is_none() {
+                run_start = Some(i);
+            }
+        } else if let Some(start) = run_start.take() {
+            let len = i - start;
+            if (4..=8).contains(&len) && is_word_bounded(bytes, start, i) {
+                return text[start..i].to_string();
+            }
+        }
+    }
+    if let Some(start) = run_start {
+        let len = text.len() - start;
+        if (4..=8).contains(&len) {
+            return text[start..].to_string();
+        }
+    }
+    String::new()
+}
+
+fn is_word_bounded(bytes: &[u8], start: usize, end: usize) -> bool {
+    let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+    let after_ok = end >= bytes.len() || !bytes[end].is_ascii_alphanumeric();
+    before_ok && after_ok
+}
+
+fn burner_short_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("{:08x}{:04x}", now, (now >> 8) & 0xffff)
+}
+
+fn burner_email(force_new: bool) -> serde_json::Value {
+    let mut doc = burner_load();
+    let saved_addr = doc.get("address").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let saved_token = doc.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if !force_new && !saved_addr.is_empty() && !saved_token.is_empty() {
+        return serde_json::json!({ "address": saved_addr, "provider": "mail.tm" });
+    }
+    // mail.tm first, then Guerrilla Mail as the fallback provider.
+    let attempt = (|| -> Result<serde_json::Value, String> {
+        let domains = http_get("https://api.mail.tm/domains", None)?;
+        let parsed: serde_json::Value = serde_json::from_str(&domains).map_err(|e| e.to_string())?;
+        let domain = parsed
+            .get("hydra:member")
+            .and_then(|m| m.get(0))
+            .and_then(|d| d.get("domain"))
+            .and_then(|d| d.as_str())
+            .ok_or("no mail.tm domain")?
+            .to_string();
+        let user = format!("omit{}", burner_short_id());
+        let address = format!("{user}@{domain}");
+        let password = burner_short_id();
+        http_post_json(
+            "https://api.mail.tm/accounts",
+            &serde_json::json!({ "address": address, "password": password }),
+        )?;
+        let token_raw = http_post_json(
+            "https://api.mail.tm/token",
+            &serde_json::json!({ "address": address, "password": password }),
+        )?;
+        let token_doc: serde_json::Value =
+            serde_json::from_str(&token_raw).map_err(|e| e.to_string())?;
+        let token = token_doc
+            .get("token")
+            .and_then(|t| t.as_str())
+            .ok_or("no token")?
+            .to_string();
+        doc = serde_json::json!({
+            "provider": "mail.tm", "address": address, "token": token, "sid": "",
+        });
+        burner_save(&doc);
+        Ok(serde_json::json!({ "address": address, "provider": "mail.tm" }))
+    })();
+    if let Ok(value) = attempt {
+        return value;
+    }
+    let fallback = (|| -> Result<serde_json::Value, String> {
+        let raw = http_get(
+            "https://api.guerrillamail.com/ajax.php?f=get_email_address",
+            None,
+        )?;
+        let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let address = parsed
+            .get("email_addr")
+            .and_then(|a| a.as_str())
+            .ok_or("no guerrilla address")?
+            .to_string();
+        let sid = parsed
+            .get("sid_token")
+            .and_then(|a| a.as_str())
+            .ok_or("no sid")?
+            .to_string();
+        doc = serde_json::json!({
+            "provider": "guerrillamail", "address": address, "token": "", "sid": sid,
+        });
+        burner_save(&doc);
+        Ok(serde_json::json!({ "address": address, "provider": "guerrillamail" }))
+    })();
+    fallback.unwrap_or_else(|e| serde_json::json!({ "address": "", "error": e }))
+}
+
+fn burner_inbox() -> Vec<serde_json::Value> {
+    let doc = burner_load();
+    let token = doc.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let sid = doc.get("sid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    if !token.is_empty() {
+        let Ok(raw) = http_get("https://api.mail.tm/messages", Some(&token)) else {
+            return out;
+        };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return out;
+        };
+        let empty = Vec::new();
+        let members = parsed
+            .get("hydra:member")
+            .and_then(|m| m.as_array())
+            .unwrap_or(&empty);
+        for message in members.iter().take(15) {
+            let id = message.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let subject = message.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+            let intro = message.get("intro").and_then(|v| v.as_str()).unwrap_or("");
+            let from = message
+                .get("from")
+                .and_then(|f| f.get("address"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("Unknown");
+            let mut full = format!("{subject} {intro}");
+            if !id.is_empty() {
+                if let Ok(detail) = http_get(&format!("https://api.mail.tm/messages/{id}"), Some(&token)) {
+                    if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&detail) {
+                        if let Some(text) = doc.get("text").and_then(|t| t.as_str()) {
+                            full.push(' ');
+                            full.push_str(text);
+                        }
+                    }
+                }
+            }
+            out.push(serde_json::json!({
+                "id": id, "from": from, "subject": subject, "intro": intro,
+                "otp": extract_otp(&full),
+            }));
+        }
+    } else if !sid.is_empty() {
+        let Ok(raw) = http_get(
+            &format!("https://api.guerrillamail.com/ajax.php?f=check_email&seq=0&sid_token={sid}"),
+            None,
+        ) else {
+            return out;
+        };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return out;
+        };
+        let empty = Vec::new();
+        let list = parsed.get("list").and_then(|l| l.as_array()).unwrap_or(&empty);
+        for message in list.iter().take(15) {
+            let subject = message.get("mail_subject").and_then(|v| v.as_str()).unwrap_or("");
+            let intro = message.get("mail_excerpt").and_then(|v| v.as_str()).unwrap_or("");
+            out.push(serde_json::json!({
+                "id": message.get("mail_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "from": message.get("mail_from").and_then(|v| v.as_str()).unwrap_or("Unknown"),
+                "subject": subject,
+                "intro": intro,
+                "otp": extract_otp(&format!("{subject} {intro}")),
+            }));
+        }
+    }
+    out
+}
+
+/// Scrapes anonymsms.com the same way BurnerManager does: /number/<digits>.
+fn burner_sms_numbers() -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for url in [
+        "https://anonymsms.com/",
+        "https://anonymsms.com/united-states/",
+        "https://anonymsms.com/united-kingdom/",
+    ] {
+        let Ok(html) = http_get(url, None) else {
+            continue;
+        };
+        for digits in scrape_number_paths(&html) {
+            if seen.insert(digits.clone()) {
+                out.push(serde_json::json!({ "digits": digits, "formatted": format!("+{digits}") }));
+                if out.len() >= 15 {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Finds every `/number/<9..15 digits>/` occurrence in a page.
+fn scrape_number_paths(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let marker = "/number/";
+    let mut rest = html;
+    while let Some(pos) = rest.find(marker) {
+        let tail = &rest[pos + marker.len()..];
+        let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if (9..=15).contains(&digits.len()) {
+            out.push(digits);
+        }
+        rest = tail;
+    }
+    out
+}
+
+fn burner_sms_messages(digits: &str) -> Vec<serde_json::Value> {
+    let digits: String = digits.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 9 || digits.len() > 15 {
+        return Vec::new();
+    }
+    let Ok(html) = http_get(&format!("https://anonymsms.com/number/{digits}/"), None) else {
+        return Vec::new();
+    };
+    let html = html.replace("\\\"", "\"");
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    // Messages are embedded as {"from": "...", "text": "...", "receivedAt": "..."}.
+    let mut rest = html.as_str();
+    while let Some(pos) = rest.find("\"from\"") {
+        let window = &rest[pos..(pos + 600).min(rest.len())];
+        rest = &rest[pos + 6..];
+        let from = json_field(window, "from");
+        let text = json_field(window, "text");
+        let at = json_field(window, "receivedAt");
+        if text.is_empty() {
+            continue;
+        }
+        out.push(serde_json::json!({
+            "from": from, "text": text, "time": at, "otp": extract_otp(&text),
+        }));
+        if out.len() >= 20 {
+            break;
+        }
+    }
+    out
+}
+
+/// Extracts "key": "value" (or a number) from a JSON-ish fragment.
+fn json_field(fragment: &str, key: &str) -> String {
+    let marker = format!("\"{key}\"");
+    let Some(pos) = fragment.find(&marker) else {
+        return String::new();
+    };
+    let tail = &fragment[pos + marker.len()..];
+    let Some(colon) = tail.find(':') else {
+        return String::new();
+    };
+    let value = tail[colon + 1..].trim_start();
+    if let Some(stripped) = value.strip_prefix('"') {
+        let mut out = String::new();
+        let mut chars = stripped.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            } else if ch == '"' {
+                break;
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    } else {
+        value
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == ':')
+            .collect()
+    }
+}
+
+#[tauri::command]
+fn get_burner_email(force_new: bool) -> serde_json::Value {
+    burner_email(force_new)
+}
+
+#[tauri::command]
+fn get_burner_inbox() -> Vec<serde_json::Value> {
+    burner_inbox()
+}
+
+#[tauri::command]
+fn get_burner_sms_numbers() -> Vec<serde_json::Value> {
+    burner_sms_numbers()
+}
+
+#[tauri::command]
+fn get_burner_sms_messages(digits: String) -> Vec<serde_json::Value> {
+    burner_sms_messages(&digits)
+}
+
+/// The whole UI state, mirroring Android's getStateJson so the shared screens
+/// are driven by real values on both platforms.
+#[derive(serde::Serialize)]
+struct StateSnapshot {
+    dark: bool,
+    shield: String,
+    countdown: u64,
+    intensity: String,
+    categories: Vec<bool>,
+    engine: Vec<bool>,
+    dns: u64,
+    custom_doh_url: String,
+    game_mode: bool,
+    offline_game_count: u64,
+    blocked_count: u64,
+    total_queries: u64,
+    active_rules: u64,
+    private_dns_host: String,
+    allow_domains: Vec<String>,
+    block_domains: Vec<String>,
+    custom_urls: Vec<String>,
+    logging: bool,
+    syncing: bool,
+    #[serde(rename = "recentBlocked")]
+    recent_blocked: Vec<RecentBlockedJson>,
+    logs: Vec<LogJson>,
+}
+
+fn intensity_name(mask: u8) -> &'static str {
+    match mask & MASK_STRICT {
+        0x09 => "Light",
+        0x3F => "Balanced",
+        0xFF => "Strict",
+        _ => "Custom",
+    }
+}
+
+#[tauri::command]
+fn get_windows_state(state: tauri::State<AppState>) -> StateSnapshot {
+    let mask = ACTIVE_MASK.load(Ordering::Relaxed) as u8;
+    let allow;
+    let block;
+    {
+        let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
+        let mut a: Vec<String> = rules.allow.iter().cloned().collect();
+        a.sort();
+        allow = a;
+        let mut b: Vec<String> = rules.block.iter().cloned().collect();
+        b.sort();
+        block = b;
+    }
+    StateSnapshot {
+        dark: true,
+        shield: if SHIELD_ACTIVE.load(Ordering::Relaxed) {
+            "protected".to_string()
+        } else {
+            "off".to_string()
+        },
+        countdown: 60,
+        intensity: intensity_name(mask).to_string(),
+        categories: (0..8).map(|i| mask & (1 << i) != 0).collect(),
+        engine: vec![
+            CNAME_UNCLOAK.load(Ordering::Relaxed),
+            ANTI_STORM_TTL.load(Ordering::Relaxed),
+            DOH_CANARY.load(Ordering::Relaxed),
+            CAPTIVE_FALLBACK.load(Ordering::Relaxed),
+            START_WITH_WINDOWS.load(Ordering::Relaxed),
+        ],
+        dns: DNS_INDEX.load(Ordering::Relaxed),
+        custom_doh_url: CUSTOM_DOH_URL.lock().map(|u| u.clone()).unwrap_or_default(),
+        game_mode: false,
+        offline_game_count: 0,
+        blocked_count: BLOCKED_QUERIES.load(Ordering::Relaxed),
+        total_queries: TOTAL_QUERIES.load(Ordering::Relaxed),
+        active_rules: RULE_COUNT.load(Ordering::Relaxed),
+        private_dns_host: String::new(),
+        allow_domains: allow,
+        block_domains: block,
+        custom_urls: Vec::new(),
+        logging: true,
+        syncing: false,
+        recent_blocked: get_windows_recent_blocked(),
+        logs: log_rows(LOG_CAPACITY),
+    }
+}
+
+/// Whether every adapter is still pinned to Omit (drives the DNS Lock row).
+#[tauri::command]
+fn get_windows_dns_lock() -> bool {
+    windows_dns_locked()
 }
 
 #[tauri::command]
@@ -776,10 +1583,40 @@ fn main() {
                     .and_then(|p| BlockTable::load(&p))
                     .unwrap_or_else(BlockTable::empty),
             );
+            // Settings live beside the app config so toggles survive restarts.
+            let settings_dir = app
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| std::env::temp_dir());
+            let _ = std::fs::create_dir_all(&settings_dir);
+            let settings_path = settings_dir.join("settings.json");
+            let _ = SETTINGS_PATH.set(settings_path.clone());
+            let mut loaded_rules = RuleSets::default();
+            load_settings(&settings_path, &mut loaded_rules);
+            let rules = Arc::new(std::sync::Mutex::new(loaded_rules));
             app.manage(AppState {
-                table,
-                rules: Arc::new(std::sync::Mutex::new(RuleSets::default())),
+                table: Arc::clone(&table),
+                rules: Arc::clone(&rules),
             });
+
+            // Re-apply the saved engine state without blocking the UI thread.
+            let table_for_start = Arc::clone(&table);
+            let rules_for_start = Arc::clone(&rules);
+            let start_enabled = START_WITH_WINDOWS.load(Ordering::Relaxed);
+            apply_start_with_windows(start_enabled);
+            let wanted = std::fs::read_to_string(&settings_path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .and_then(|v| v.get("shieldActive").and_then(|b| b.as_bool()))
+                .unwrap_or(false);
+            if wanted && is_elevated() && !table_for_start.hashes.is_empty() {
+                std::thread::spawn(move || {
+                    if start_dns_sinkhole(Arc::clone(&table_for_start), Arc::clone(&rules_for_start)) {
+                        set_windows_local_dns();
+                        SHIELD_ACTIVE.store(true, Ordering::SeqCst);
+                    }
+                });
+            }
 
             // Carry the app icon when the bundle provides one so the tray entry is
             // visible; a missing icon must never stop the app from starting.
@@ -810,12 +1647,24 @@ fn main() {
             get_platform,
             get_windows_stats,
             set_windows_categories,
+            set_windows_categories_persisted,
             set_windows_rules,
             get_windows_rules,
             get_windows_logs,
             clear_windows_logs,
             get_shield_status,
             toggle_windows_shield,
+            set_windows_engine,
+            set_windows_dns,
+            clear_windows_rule,
+            get_windows_state,
+            get_windows_dns_lock,
+            get_windows_dns_conflict,
+            get_windows_recent_blocked,
+            get_burner_email,
+            get_burner_inbox,
+            get_burner_sms_numbers,
+            get_burner_sms_messages,
             download_and_install_update,
             set_windows_theme
         ])

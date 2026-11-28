@@ -50,12 +50,6 @@ object OmitPrefs {
 
     @Volatile var cnameUncloak: Boolean = true
         private set
-    @Volatile var ispUnblockEnabled: Boolean = true
-        private set
-    @Volatile var smartContextMode: Boolean = true
-        private set
-    @Volatile var trapIpEnabled: Boolean = true
-        private set
     @Volatile var homeShieldEnabled: Boolean = false
         private set
     @Volatile var antiStormTtl: Boolean = true
@@ -120,9 +114,6 @@ object OmitPrefs {
             customDohUrl = prefs.getString("custom_doh_url", "https://dns.google/dns-query") ?: "https://dns.google/dns-query"
 
             cnameUncloak = prefs.getBoolean("cname_uncloak", true)
-            ispUnblockEnabled = prefs.getBoolean("isp_unblock_enabled", true)
-            smartContextMode = prefs.getBoolean("smart_context_mode", true)
-            trapIpEnabled = prefs.getBoolean("trap_ip_enabled", true)
             homeShieldEnabled = prefs.getBoolean("home_shield_enabled", false)
             antiStormTtl = prefs.getBoolean("anti_storm_ttl", true)
             blockDohCanary = prefs.getBoolean("block_doh_canary", true)
@@ -217,24 +208,6 @@ object OmitPrefs {
     fun setHomeShieldEnabled(enabled: Boolean) {
         homeShieldEnabled = enabled
         prefs.edit().putBoolean("home_shield_enabled", enabled).apply()
-        notifyChanged()
-    }
-
-    fun setIspUnblockEnabled(enabled: Boolean) {
-        ispUnblockEnabled = enabled
-        prefs.edit().putBoolean("isp_unblock_enabled", enabled).apply()
-        notifyChanged()
-    }
-
-    fun setSmartContextMode(enabled: Boolean) {
-        smartContextMode = enabled
-        prefs.edit().putBoolean("smart_context_mode", enabled).apply()
-        notifyChanged()
-    }
-
-    fun setTrapIpEnabled(enabled: Boolean) {
-        trapIpEnabled = enabled
-        prefs.edit().putBoolean("trap_ip_enabled", enabled).apply()
         notifyChanged()
     }
 

@@ -28,7 +28,12 @@ import {
   getWindowsLogs,
   getWindowsRules,
   setWindowsCategoryMask,
+  setWindowsDns,
+  setWindowsEngine,
   setWindowsRule,
+  clearWindowsRule,
+  windowsDnsLock,
+  windowsState,
   setWindowsShield,
   windowsShieldStatus,
   windowsStats,
@@ -299,10 +304,10 @@ const engineData = [
 
 /** On Windows the phone-specific engine rows are replaced, not just hidden. */
 const windowsEngineData = [
-  ["CNAME Uncloaking", "Finds trackers hidden behind first-party domains.", "Rare CDN aliases may need an allow rule."],
+  ["Tracker CNAME Guard", "Inspects the CNAME chain so cloaked trackers are still caught.", "Rare CDN aliases may need an allow rule."],
   ["TTL Retry Guard", "Caches blocked answers so apps stop re-querying.", "Blocks stay cached for five minutes."],
-  ["Windows DNS Lock", "Keeps the adapter pinned to Omit while the shield is on.", "Other DNS tools may conflict."],
-  ["Captive Portal Helper", "Lets hotel and airport Wi-Fi login pages open.", "The portal lookup may briefly be unencrypted."],
+  ["Encrypted DNS Guard", "Stops browsers negotiating a resolver that bypasses Omit.", "Some browsers may fall back to system DNS."],
+  ["Captive Portal Helper", "Falls back to plain DNS so hotel and airport logins still load.", "Each fallback lookup is unencrypted."],
   ["Start with Windows", "Restores protection automatically after restart.", "Omit starts without manual confirmation."],
 ] as const;
 
@@ -508,6 +513,25 @@ export default function App() {
     };
   }, []);
 
+  // Windows shell: pull the persisted engine state once so every screen starts
+  // from real values instead of the generic fallback.
+  useEffect(() => {
+    if (!windows) return;
+    let mounted = true;
+    void windowsState().then((snapshot) => {
+      if (!mounted || !snapshot) return;
+      setState((cur) => ({
+        ...cur,
+        ...snapshot,
+        // Theme is owned by the renderer (localStorage), not the Rust side.
+        dark: cur.dark,
+      }));
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [windows]);
+
   // Windows shell: poll live engine stats so Home tiles stay truthful
   const [windowsReady, setWindowsReady] = useState(!windows);
   useEffect(() => {
@@ -535,6 +559,30 @@ export default function App() {
     };
     void tick();
     const timer = window.setInterval(() => void tick(), 4000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [windows]);
+
+  // Windows: mirror the engine's "Recently blocked" list on the Home screen.
+  useEffect(() => {
+    if (!windows) return;
+    let mounted = true;
+    const pull = async () => {
+      const invoke = window.__TAURI__?.core?.invoke;
+      if (!invoke) return;
+      try {
+        const rows = await invoke<RecentBlockedItem[]>("get_windows_recent_blocked");
+        if (mounted && Array.isArray(rows)) {
+          setState((cur) => ({ ...cur, recentBlocked: rows }));
+        }
+      } catch {
+        /* engine not ready yet */
+      }
+    };
+    void pull();
+    const timer = window.setInterval(() => void pull(), 5000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
@@ -645,16 +693,45 @@ export default function App() {
 
   const handleToggleCategory = (index: number) => {
     androidBridge()?.toggleCategory(index);
-    if (windows) void setWindowsCategoryMask(undefined, index);
     setState((cur) => {
       const nextCats = cur.categories.map((v, i) => (i === index ? !v : v));
       return { ...cur, categories: nextCats, intensity: computeIntensityName(nextCats) };
     });
+    if (windows) {
+      void setWindowsCategoryMask(undefined, index).then((mask) => {
+        if (mask === null) {
+          // The engine rejected it: put the switch back where it was.
+          setState((cur) => {
+            const reverted = cur.categories.map((v, i) => (i === index ? !v : v));
+            return { ...cur, categories: reverted, intensity: computeIntensityName(reverted) };
+          });
+          setToast("That category could not be changed");
+        }
+      });
+    }
   };
+
+  /** Engine rows are index-aligned with Windows' five switches. */
+  const WINDOWS_ENGINE_KEYS = [
+    "cname_uncloak",
+    "anti_storm_ttl",
+    "block_doh_canary",
+    "captive_portal_fallback",
+    "start_on_boot",
+  ];
 
   const handleToggleEngine = (index: number) => {
     androidBridge()?.toggleEngine(index);
-    setState((cur) => ({ ...cur, engine: cur.engine.map((v, i) => (i === index ? !v : v)) }));
+    const nextEngine = state.engine.map((v, i) => (i === index ? !v : v));
+    if (windows) {
+      const key = WINDOWS_ENGINE_KEYS[index];
+      if (key) {
+        void setWindowsEngine(key, nextEngine[index]).then((ok) => {
+          if (!ok) setToast("That switch could not be changed");
+        });
+      }
+    }
+    setState((cur) => ({ ...cur, engine: nextEngine }));
   };
 
   const handleSelectDns = (index: number) => {
@@ -664,6 +741,7 @@ export default function App() {
       return;
     }
     androidBridge()?.setUpstreamDns(index, "");
+    if (windows) void setWindowsDns(index, "");
     setState((cur) => ({ ...cur, dns: index }));
     setDnsOpen(false);
     setToast(`${dnsData[index][0]} active`);
@@ -676,6 +754,11 @@ export default function App() {
       return;
     }
     androidBridge()?.setUpstreamDns(4, trimmed);
+    if (windows) {
+      void setWindowsDns(4, trimmed).then((ok) => {
+        if (!ok) setToast("That DoH endpoint could not be saved");
+      });
+    }
     setState((cur) => ({ ...cur, dns: 4, customDohUrl: trimmed }));
     setCustomDnsOpen(false);
     setDnsOpen(false);
@@ -1062,6 +1145,45 @@ export default function App() {
                     Need an exception? Add the domain under Blocking → Allow or block domains.
                   </div>
                 </div>
+              </div>
+            </section>
+
+            {/* Per-app connect modes need the Android VPN; Windows bypasses by domain. */}
+            <section className="section">
+              <div className="section-title">
+                <div>
+                  <h2>Bypassed domains</h2>
+                  <p>Always allowed, even when the shield is on</p>
+                </div>
+                <span>{state.allowDomains.length}</span>
+              </div>
+              <div className="row-list">
+                {state.allowDomains.length ? (
+                  state.allowDomains.map((domain) => (
+                    <div key={domain} className="row-item">
+                      <span className="domain-icon">{domain[0]?.toUpperCase() ?? "D"}</span>
+                      <div className="row-copy">
+                        <strong>{domain}</strong>
+                        <span>Allowed by a custom rule</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="pill-btn"
+                        onClick={() => handleRemoveAllow(domain)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty">
+                    <Icon name="wifi" />
+                    <p>
+                      Windows has no per-app VPN. Allow a domain instead and it stays reachable from
+                      every app.
+                    </p>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -1461,10 +1583,10 @@ export default function App() {
                 const bridge = androidBridge();
                 if (bridge) {
                   bridge.removeCustomRuleForDomain(selectedLog.domain);
-                } else {
-                  handleRemoveAllow(selectedLog.domain);
-                  handleRemoveBlock(selectedLog.domain);
                 }
+                if (windows) void clearWindowsRule(selectedLog.domain);
+                handleRemoveAllow(selectedLog.domain);
+                handleRemoveBlock(selectedLog.domain);
                 setToast(`Custom rule removed for ${selectedLog.domain}`);
                 setSelectedLog(null);
               }}
@@ -1827,14 +1949,20 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
 function WindowsStatusCard({ onToast }: { onToast: (msg: string) => void }) {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof windowsShieldStatus>>>(null);
   const [rules, setRules] = useState<number | null>(null);
+  const [dnsLocked, setDnsLocked] = useState<boolean | null>(null);
 
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
-      const [next, stats] = await Promise.all([windowsShieldStatus(), windowsStats()]);
+      const [next, stats, locked] = await Promise.all([
+        windowsShieldStatus(),
+        windowsStats(),
+        windowsDnsLock(),
+      ]);
       if (!mounted) return;
       if (next) setStatus(next);
       if (stats) setRules(stats.rules);
+      setDnsLocked(locked);
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 4000);
@@ -1878,10 +2006,26 @@ function WindowsStatusCard({ onToast }: { onToast: (msg: string) => void }) {
           {status?.message && status.admin && <div className="home-shield-note">{status.message}</div>}
           <div className="home-shield-line">
             <span>
-              {rules ? `${rules.toLocaleString("en-US")} rules loaded` : "Loading rule table"} · adapter DNS is
-              restored on exit
+              {rules ? `${rules.toLocaleString("en-US")} rules loaded` : "Loading rule table"} ·{" "}
+              {status?.active
+                ? dnsLocked
+                  ? "adapter DNS pinned to Omit"
+                  : "adapter DNS not pinned — re-check elevation"
+                : "adapter DNS is restored on exit"}
             </span>
-            <button type="button" className="pill-btn" onClick={() => onToast("DNS restore is automatic")}>
+            <button
+              type="button"
+              className="pill-btn"
+              onClick={() =>
+                onToast(
+                  status?.active
+                    ? dnsLocked
+                      ? "Every adapter resolves through Omit"
+                      : "Turn the shield off and on to re-pin adapter DNS"
+                    : "Closing Omit restores your normal DNS",
+                )
+              }
+            >
               Info
             </button>
           </div>
@@ -1977,15 +2121,33 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
     };
   }, [smsIdx]);
 
+  // Windows talks to the same providers through Rust commands (no CORS, and the
+  // API keys stay out of the webview). Android uses its JavascriptInterface.
+  const invoke = isWindowsRuntime() ? window.__TAURI__?.core?.invoke : undefined;
+
   const loadEmail = (forceNew = false) => {
     const bridge = androidBridge();
-    if (!bridge) {
-      onToast("Burner inbox is available in the Omit app");
+    setLoading(true);
+    if (bridge?.fetchBurnerEmailAsync) {
+      bridge.fetchBurnerEmailAsync(forceNew);
       return;
     }
-    setLoading(true);
-    if (bridge.fetchBurnerEmailAsync) {
-      bridge.fetchBurnerEmailAsync(forceNew);
+    if (invoke) {
+      void (async () => {
+        try {
+          const res = await invoke<{ address?: string; error?: string }>("get_burner_email", {
+            forceNew,
+          });
+          if (res?.address) setEmailAddr(res.address);
+          else if (res?.error) onToastRef.current(res.error);
+          const inbox = await invoke<BurnerEmailMsg[]>("get_burner_inbox");
+          if (Array.isArray(inbox)) setEmailMsgs(inbox);
+        } catch {
+          onToastRef.current("Could not reach the burner email provider");
+        } finally {
+          setLoading(false);
+        }
+      })();
       return;
     }
     window.setTimeout(() => {
@@ -1999,17 +2161,39 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
 
   const loadSms = (idx = smsIdx) => {
     const bridge = androidBridge();
-    if (!bridge) {
-      onToast("Burner numbers are available in the Omit app");
+    setLoading(true);
+    if (invoke) {
+      void (async () => {
+        try {
+          let numbers = smsNums;
+          if (!numbers.length) {
+            const fetched = await invoke<BurnerSmsNum[]>("get_burner_sms_numbers");
+            if (Array.isArray(fetched)) numbers = fetched;
+            if (numbers.length) setSmsNums(numbers);
+          }
+          if (numbers.length) {
+            const current = numbers[idx % numbers.length];
+            const messages = await invoke<BurnerSmsMsg[]>("get_burner_sms_messages", {
+              digits: current.digits,
+            });
+            if (Array.isArray(messages)) setSmsMsgs(messages);
+          } else {
+            onToastRef.current("Could not load SMS numbers");
+          }
+        } catch {
+          onToastRef.current("Could not reach the SMS provider");
+        } finally {
+          setLoading(false);
+        }
+      })();
       return;
     }
-    setLoading(true);
-    if (smsNums.length && bridge.fetchBurnerSmsMessagesAsync) {
+    if (smsNums.length && bridge?.fetchBurnerSmsMessagesAsync) {
       const current = smsNums[idx % smsNums.length];
       bridge.fetchBurnerSmsMessagesAsync(current.digits);
       return;
     }
-    if (bridge.fetchBurnerSmsNumbersAsync) {
+    if (bridge?.fetchBurnerSmsNumbersAsync) {
       bridge.fetchBurnerSmsNumbersAsync();
       return;
     }
@@ -2032,7 +2216,8 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
   smsIdxRef.current = smsIdx;
 
   useEffect(() => {
-    if (!isAndroidRuntime()) return;
+    // Windows reads the same providers directly over HTTPS (CSP allows them).
+    if (!isAndroidRuntime() && !isWindowsRuntime()) return;
     if (burnerTab === "email" && !emailAddr) loadEmail(false);
     if (burnerTab === "sms" && smsNums.length === 0) loadSms(0);
     const timer = window.setInterval(() => {

@@ -22,11 +22,14 @@
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://acwac.github.io https://api.mail.tm https://api.guerrillamail.com https://anonymsms.com"
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -320,16 +320,6 @@ class OmitJsBridge(
     }
 
     @JavascriptInterface
-    fun setIspUnblockEnabled(enabled: Boolean) {
-        OmitPrefs.setIspUnblockEnabled(enabled)
-    }
-
-    @JavascriptInterface
-    fun setSmartContextMode(enabled: Boolean) {
-        OmitPrefs.setSmartContextMode(enabled)
-    }
-
-    @JavascriptInterface
     fun getSpyStatsJson(): String {
         val arr = org.json.JSONArray()
         for (s in OmitPrefs.getSpyStatsSnapshot().take(20)) {
