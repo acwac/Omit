@@ -29,18 +29,19 @@ jobs:
           npm run build
 
       - name: tauri build (bundler step)
+        continue-on-error: true
         shell: pwsh
         run: |
           cd desktop-windows
           npm install
-          npx tauri build 2>&1 | Tee-Object -FilePath ../tauri-build.log
-          "EXIT=$LASTEXITCODE" | Out-File -Append ../tauri-build.log
-          Get-Content ../tauri-build.log -Tail 80 | Out-File -Append ../bundler.log
+          npx tauri build 2>&1 | Tee-Object -FilePath ..\tauri-build.log
+          "EXIT=$LASTEXITCODE" | Out-File -Append ..\tauri-build.log
+          Get-Content ..\tauri-build.log -Tail 120 | Out-File -Append ..\bundler.log -Encoding utf8
 
       - name: post bundler output
         shell: pwsh
         run: |
-          $out = Get-Content ../bundler.log -Raw
+          $out = if (Test-Path ..\bundler.log) { Get-Content ..\bundler.log -Raw } else { "no bundler output" }
           $body = "tauri build output for ${{ github.sha }}`n`````n$out`n`````"
           $json = @{ body = $body } | ConvertTo-Json -Depth 3
           $path = Join-Path $env:RUNNER_TEMP payload2.json
