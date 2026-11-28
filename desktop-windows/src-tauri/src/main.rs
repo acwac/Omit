@@ -767,11 +767,6 @@ fn blocklist_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn get_platform() -> &'static str {
-    "windows"
-}
-
-#[tauri::command]
 fn get_windows_stats() -> WindowsStats {
     WindowsStats {
         total: TOTAL_QUERIES.load(Ordering::Relaxed),
@@ -960,19 +955,6 @@ fn set_windows_categories(mask: Option<u8>, toggle_index: Option<u8>) -> u8 {
     next
 }
 
-/// Category changes go through here so the mask is saved with the rest.
-#[tauri::command]
-fn set_windows_categories_persisted(
-    mask: Option<u8>,
-    toggle_index: Option<u8>,
-    state: tauri::State<AppState>,
-) -> u8 {
-    let next = set_windows_categories(mask, toggle_index);
-    let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
-    persist_settings(&state.table, &rules);
-    next
-}
-
 #[tauri::command]
 fn set_windows_rules(domain: String, mode: String, state: tauri::State<AppState>) -> bool {
     let clean = domain.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -1112,13 +1094,6 @@ fn set_windows_engine(key: String, enabled: bool, state: tauri::State<AppState>)
     let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
     persist_settings(&table, &rules);
     true
-}
-
-/// Windows has no Android-style private-DNS warning; the card asks for the
-/// real conflict state instead of a placeholder string.
-#[tauri::command]
-fn get_windows_dns_conflict() -> String {
-    String::new()
 }
 
 #[tauri::command]
@@ -1712,10 +1687,8 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_platform,
             get_windows_stats,
             set_windows_categories,
-            set_windows_categories_persisted,
             set_windows_rules,
             get_windows_rules,
             get_windows_logs,
@@ -1729,7 +1702,6 @@ fn main() {
             get_windows_update,
             get_windows_state,
             get_windows_dns_lock,
-            get_windows_dns_conflict,
             get_windows_recent_blocked,
             get_burner_email,
             get_burner_inbox,

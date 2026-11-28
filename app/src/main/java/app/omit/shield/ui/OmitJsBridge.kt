@@ -534,15 +534,6 @@ class OmitJsBridge(
     fun getVersionCode(): Int = installedVersionCode()
 
     @JavascriptInterface
-    fun getVersionName(): String {
-        return try {
-            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: ""
-        } catch (_: Throwable) {
-            ""
-        }
-    }
-
-    @JavascriptInterface
     fun checkUpdateJson(): String {
         return fetchUpdateJson()?.toString() ?: "{}"
     }
