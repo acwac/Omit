@@ -455,6 +455,8 @@ fn run_powershell(script: &str) {
 }
 
 fn restore_windows_dns() {
+    // Still points the adapters back even if the OS is not Windows (builds/tests),
+    // so the logic is identical on every target.
     #[cfg(target_os = "windows")]
     run_powershell(
         "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object { \
@@ -750,15 +752,18 @@ fn main() {
         default_hook(info);
     }));
 
-    tauri::Builder::default()
-        // Must be the first plugin: a shortcut launch has to create the window
-        // rather than a second windowless process (Tauri v2 requirement).
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }))
+    let builder = tauri::Builder::default();
+    // Must be the first plugin on Windows: a shortcut launch has to create the
+    // window rather than a second windowless process (Tauri v2 requirement).
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+
+    builder
         .setup(|app| {
             let handle = app.handle().clone();
             // `panic = "abort"` in release means the panic hook above is the only
@@ -774,9 +779,13 @@ fn main() {
                 rules: std::sync::Mutex::new(RuleSets::default()),
             });
 
-            // Carry the app icon so the tray entry is actually visible on Windows.
-            let _tray = TrayIconBuilder::with_id("omit-tray")
-                .icon(app.default_window_icon().cloned().ok_or("missing app icon")?)
+            // Carry the app icon when the bundle provides one so the tray entry is
+            // visible; a missing icon must never stop the app from starting.
+            let mut tray = TrayIconBuilder::with_id("omit-tray");
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray = tray.icon(icon);
+            }
+            let _tray = tray
                 .tooltip("Omit — Ad, Tracker & Anti-DPI Shield")
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
