@@ -9,8 +9,8 @@ import android.content.Intent
 import android.widget.RemoteViews
 import app.omit.shield.R
 import app.omit.shield.data.ShieldState
-import app.omit.shield.data.VellumPrefs
-import app.omit.shield.service.VellumVpnService
+import app.omit.shield.data.OmitPrefs
+import app.omit.shield.service.OmitVpnService
 
 class OmitWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
@@ -22,12 +22,12 @@ class OmitWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (intent.action == ACTION_TOGGLE_PAUSE) {
-            VellumPrefs.init(context)
-            val svcIntent = Intent(context, VellumVpnService::class.java)
-            if (VellumPrefs.shieldState == ShieldState.PAUSED) {
-                svcIntent.action = VellumVpnService.ACTION_RESUME
+            OmitPrefs.init(context)
+            val svcIntent = Intent(context, OmitVpnService::class.java)
+            if (OmitPrefs.shieldState == ShieldState.PAUSED) {
+                svcIntent.action = OmitVpnService.ACTION_RESUME
             } else {
-                svcIntent.action = VellumVpnService.ACTION_PAUSE_60S
+                svcIntent.action = OmitVpnService.ACTION_PAUSE_60S
             }
             context.startService(svcIntent)
             updateAll(context)
@@ -44,16 +44,16 @@ class OmitWidgetProvider : AppWidgetProvider() {
         }
 
         private fun updateWidget(context: Context, mgr: AppWidgetManager, id: Int) {
-            VellumPrefs.init(context)
+            OmitPrefs.init(context)
             val views = RemoteViews(context.packageName, R.layout.widget_omit)
-            val paused = VellumPrefs.shieldState == ShieldState.PAUSED
+            val paused = OmitPrefs.shieldState == ShieldState.PAUSED
             views.setTextViewText(
                 R.id.widget_status,
                 if (paused) "Omit · Paused" else "Omit · Protected"
             )
             views.setTextViewText(
                 R.id.widget_count,
-                "${VellumPrefs.blockedQueries.get()} blocked"
+                "${OmitPrefs.blockedQueries.get()} blocked"
             )
             views.setTextViewText(
                 R.id.widget_action_btn,

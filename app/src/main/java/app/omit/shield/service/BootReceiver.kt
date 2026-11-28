@@ -5,17 +5,17 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
-import app.omit.shield.data.VellumPrefs
+import app.omit.shield.data.OmitPrefs
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val act = intent?.action ?: return
         if (act == Intent.ACTION_BOOT_COMPLETED || act == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            VellumPrefs.init(context)
-            if (VellumPrefs.startOnBoot && VellumPrefs.desiredEnabled && VpnService.prepare(context) == null) {
+            OmitPrefs.init(context)
+            if (OmitPrefs.startOnBoot && OmitPrefs.desiredEnabled && VpnService.prepare(context) == null) {
                 try {
-                    val svc = Intent(context, VellumVpnService::class.java).apply {
-                        action = VellumVpnService.ACTION_START
+                    val svc = Intent(context, OmitVpnService::class.java).apply {
+                        action = OmitVpnService.ACTION_START
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         context.startForegroundService(svc)

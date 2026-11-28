@@ -2,13 +2,51 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=2.2.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>Omit</title>
-    <script type="module" crossorigin src="./assets/index-DMr0iAhG.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Dwhj5w7G.css">
+    <style>
+      /* Painted before React mounts so the WebView never flashes white. */
+      html,
+      body,
+      #root {
+        margin: 0;
+        min-height: 100%;
+        background: #111512;
+      }
+      html[data-theme="light"],
+      html[data-theme="light"] body,
+      html[data-theme="light"] #root {
+        background: #f4f6f3;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+      }
+      #boot span {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 3px solid rgba(127, 212, 174, 0.25);
+        border-top-color: #7fd4ae;
+        animation: omit-boot-spin 0.8s linear infinite;
+      }
+      @keyframes omit-boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-BkGFCcf2.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C4tlTewy.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div id="boot"><span></span></div></div>
   </body>
 </html>

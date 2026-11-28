@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Vellum Offline Blocklist Compiler (vellum_starter.vbin)
+Omit Offline Blocklist Compiler (omit_starter.vbin)
 Compiles open-source DNS filter lists into an ultra-compact, zero-allocation
 64-bit sorted hash + 8-bit category bitmask binary table (VELLUM01 format).
 """
@@ -130,7 +130,7 @@ SOCIAL_TRACKER_SEEDS = {
 
 DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)+$")
 
-def vellum_hash64_unsigned(domain: str) -> int:
+def omit_hash64_unsigned(domain: str) -> int:
     h = 0xcbf29ce484222325
     prime = 0x100000001b3
     mask64 = 0xFFFFFFFFFFFFFFFF
@@ -218,7 +218,7 @@ def main():
 
     for name, url, cat, cap in SOURCES:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 VellumCompiler/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 OmitCompiler/1.0"})
             with urllib.request.urlopen(req, timeout=20) as resp:
                 lines = resp.read().decode("utf-8", errors="ignore").splitlines()
             blocks, allows = 0, 0
@@ -278,7 +278,7 @@ def main():
 
     entries = {}
     for d, mask in pruned.items():
-        sh = to_signed64(vellum_hash64_unsigned(d))
+        sh = to_signed64(omit_hash64_unsigned(d))
         entries[sh] = entries.get(sh, 0) | mask
 
     sorted_items = sorted(entries.items(), key=lambda x: x[0])

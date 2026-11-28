@@ -1,9 +1,14 @@
 {
-  "$schema": "https://schema.tauri.app/config/2/capabilities",
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default Omit Windows capabilities",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-set-theme",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-close"
   ]
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Omit",
-  "version": "2.1.0",
+  "version": "2.5.0",
   "identifier": "app.omit.shield",
   "build": {
     "frontendDist": "../../app/src/main/assets/ui"
@@ -9,27 +9,37 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Omit",
-        "width": 440,
-        "height": 780,
+        "width": 1040,
+        "height": 760,
+        "minWidth": 390,
+        "minHeight": 620,
         "resizable": true,
-        "center": true
+        "center": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://acwac.github.io https://api.mail.tm https://api.guerrillamail.com https://anonymsms.com"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "nsis",
+    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../../app/src/main/assets/omit_starter.vbin": "omit_starter.vbin"
+    },
     "windows": {
-      "wix": null
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
     }
   }
 }

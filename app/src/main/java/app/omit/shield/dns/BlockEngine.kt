@@ -2,7 +2,7 @@ package app.omit.shield.dns
 
 import android.content.Context
 import app.omit.shield.data.FilterMetadata
-import app.omit.shield.data.VellumPrefs
+import app.omit.shield.data.OmitPrefs
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
@@ -21,6 +21,8 @@ import java.util.Arrays
 enum class VerdictType {
     ALLOWED,
     BLOCKED_STANDARD,
+    /** Empty NOERROR: used for AAAA so IPv6 devices keep NAT64 reachability. */
+    BLOCKED_EMPTY,
     BLOCKED_CANARY_NXDOMAIN
 }
 
@@ -89,8 +91,8 @@ object BlockEngine {
 
             val finalTable = loaded ?: context.assets.open(STARTER_ASSET).use { loadFromStream(it) }
             activeTable = finalTable
-            if (VellumPrefs.compiledRuleCount != finalTable.hashes.size) {
-                VellumPrefs.updateSyncMetadata(finalTable.hashes.size)
+            if (OmitPrefs.compiledRuleCount != finalTable.hashes.size) {
+                OmitPrefs.updateSyncMetadata(finalTable.hashes.size)
             }
         }
     }
@@ -146,10 +148,11 @@ object BlockEngine {
 
     fun checkDomain(
         rawDomain: String,
-        activeMask: Int = VellumPrefs.activeCategoryMask.get(),
-        allowSet: Set<String> = VellumPrefs.customAllowDomains,
-        blockSet: Set<String> = VellumPrefs.customBlockDomains,
-        blockDohCanary: Boolean = VellumPrefs.blockDohCanary
+        qtype: Int = 1,
+        activeMask: Int = OmitPrefs.activeCategoryMask.get(),
+        allowSet: Set<String> = OmitPrefs.customAllowDomains,
+        blockSet: Set<String> = OmitPrefs.customBlockDomains,
+        blockDohCanary: Boolean = OmitPrefs.blockDohCanary
     ): BlockVerdict {
         val domain = rawDomain.trim('.').lowercase()
         if (domain.isEmpty() || !domain.contains('.')) {
@@ -168,12 +171,12 @@ object BlockEngine {
             return BlockVerdict(VerdictType.BLOCKED_CANARY_NXDOMAIN, 0, "Browser DNS Guard")
         }
 
-        // 3. User Custom Blocklist
+        // 3. User Custom Blocklist (always honoured, both families)
         if (blockSet.isNotEmpty() && matchesSuffixSet(domain, blockSet)) {
             return BlockVerdict(VerdictType.BLOCKED_STANDARD, 0x100, "Custom Rule")
         }
 
-        // 4. Essential safety guard
+        // 4. Essential safety guard (Play Games, OAuth, cloud saves) — always allowed
         if (AUTH_SAFE_LIST.contains(domain) || ESSENTIAL_SAFE.contains(domain)) {
             return BlockVerdict(VerdictType.ALLOWED)
         }
@@ -200,6 +203,15 @@ object BlockEngine {
                 val entryMask = masks[idx].toInt() and 0xFF
                 val hit = entryMask and activeMask
                 if (hit != 0) {
+                    // AAAA lookups get an empty NOERROR so IPv6/NAT64 devices keep working;
+                    // the A record is what apps actually connect with.
+                    if (qtype == 28) {
+                        return BlockVerdict(
+                            type = VerdictType.BLOCKED_EMPTY,
+                            matchedMask = hit,
+                            reason = FilterMetadata.categoryLabelForMask(hit)
+                        )
+                    }
                     return BlockVerdict(
                         type = VerdictType.BLOCKED_STANDARD,
                         matchedMask = hit,
@@ -241,7 +253,7 @@ object BlockEngine {
                 Pair("https://adaway.org/hosts.txt", FilterMetadata.BIT_GAME_ADS),
                 Pair("https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&showintro=0", FilterMetadata.BIT_WEB_ADS)
             )
-            for (customUrl in VellumPrefs.customListUrls) {
+            for (customUrl in OmitPrefs.customListUrls) {
                 liveSources.add(Pair(customUrl, FilterMetadata.BIT_GAME_ADS or FilterMetadata.BIT_WEB_ADS))
             }
 
@@ -250,7 +262,7 @@ object BlockEngine {
                     val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                         connectTimeout = 8000
                         readTimeout = 14000
-                        setRequestProperty("User-Agent", "Vellum-Android/1.1")
+                        setRequestProperty("User-Agent", "Omit-Android/2.5")
                     }
                     if (conn.responseCode in 200..299) {
                         BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
@@ -294,7 +306,7 @@ object BlockEngine {
             tmpFile.renameTo(dstFile)
 
             activeTable = CompiledTable(newHashes, newMasks)
-            VellumPrefs.updateSyncMetadata(finalCount)
+            OmitPrefs.updateSyncMetadata(finalCount)
             Result.success(finalCount)
         } catch (t: Throwable) {
             Result.failure(t)

@@ -2,7 +2,7 @@ package app.omit.shield.dns
 
 import android.net.VpnService
 import app.omit.shield.data.FilterMetadata
-import app.omit.shield.data.VellumPrefs
+import app.omit.shield.data.OmitPrefs
 import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -13,7 +13,51 @@ import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLSocketFactory
 
+/**
+ * RFC 8484 DNS-over-HTTPS client.
+ *
+ * Every socket is `VpnService.protect()`-ed so the encrypted queries leave through the real
+ * network instead of being routed back into our own TUN (which would deadlock).
+ *
+ * Endpoints are IP-literal (https://8.8.8.8/dns-query) so they work before the device has
+ * any working DNS, which is exactly the state an ISP-blocked phone is in.
+ */
 class DohClient(private val vpnService: VpnService?) {
+
+    /**
+     * After a provider fails we remember it briefly so a flaky network does not pay the
+     * full 3-provider timeout chain on every single query (which stalls browsing badly).
+     */
+    private class ProviderHealth {
+        @Volatile var deadUntilMs: Long = 0L
+    }
+
+    private val health = HashMap<String, ProviderHealth>()
+
+    private fun isHealthy(key: String): Boolean {
+        val h = synchronized(health) { health[key] } ?: return true
+        return h.deadUntilMs <= System.currentTimeMillis()
+    }
+
+    private fun markFailure(key: String) {
+        synchronized(health) {
+            health.getOrPut(key) { ProviderHealth() }.deadUntilMs =
+                System.currentTimeMillis() + FAILURE_COOLDOWN_MS
+        }
+    }
+
+    private fun markSuccess(key: String) {
+        synchronized(health) {
+            health.getOrPut(key) { ProviderHealth() }.deadUntilMs = 0L
+        }
+    }
+
+    private fun tryEndpoint(key: String, url: String, queryWire: ByteArray): ByteArray? {
+        if (!isHealthy(key)) return null
+        val result = queryDohUrl(url, queryWire)
+        if (result == null) markFailure(key) else markSuccess(key)
+        return result
+    }
 
     private val protectedSslFactory: SSLSocketFactory = object : SSLSocketFactory() {
         private val delegate = SSLSocketFactory.getDefault() as SSLSocketFactory
@@ -35,7 +79,7 @@ class DohClient(private val vpnService: VpnService?) {
         override fun createSocket(host: String?, port: Int): Socket {
             val s = Socket()
             vpnService?.protect(s)
-            s.connect(InetSocketAddress(host, port), 3500)
+            s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
             return delegate.createSocket(s, host, port, true)
         }
 
@@ -43,32 +87,39 @@ class DohClient(private val vpnService: VpnService?) {
             val s = Socket()
             vpnService?.protect(s)
             s.bind(InetSocketAddress(localHost, localPort))
-            s.connect(InetSocketAddress(host, port), 3500)
+            s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
             return delegate.createSocket(s, host, port, true)
         }
 
         override fun createSocket(host: InetAddress?, port: Int): Socket {
             val s = Socket()
             vpnService?.protect(s)
-            s.connect(InetSocketAddress(host, port), 3500)
+            s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
             return delegate.createSocket(s, host?.hostAddress, port, true)
         }
 
-        override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket {
+        override fun createSocket(
+            address: InetAddress?,
+            port: Int,
+            localAddress: InetAddress?,
+            localPort: Int
+        ): Socket {
             val s = Socket()
             vpnService?.protect(s)
             s.bind(InetSocketAddress(localAddress, localPort))
-            s.connect(InetSocketAddress(address, port), 3500)
+            s.connect(InetSocketAddress(address, port), CONNECT_TIMEOUT_MS)
             return delegate.createSocket(s, address?.hostAddress, port, true)
         }
     }
 
     fun resolve(queryWire: ByteArray): Pair<ByteArray, String>? {
-        val selectedId = VellumPrefs.upstreamId
+        val selectedId = OmitPrefs.upstreamId
         if (selectedId == "custom") {
-            val customUrl = VellumPrefs.customDohUrl
+            val customUrl = OmitPrefs.customDohUrl
             if (customUrl.startsWith("https://")) {
-                queryDohUrl(customUrl, queryWire)?.let { return Pair(it, "Custom DoH") }
+                tryEndpoint("custom:$customUrl", customUrl, queryWire)?.let {
+                    return Pair(it, "Custom DoH")
+                }
             }
         }
 
@@ -76,14 +127,14 @@ class DohClient(private val vpnService: VpnService?) {
 
         // 1. Primary IP-bootstrapped DoH (Google https://8.8.8.8/dns-query by default)
         if (spec.primaryDohUrl.startsWith("https://")) {
-            queryDohUrl(spec.primaryDohUrl, queryWire)?.let {
+            tryEndpoint(spec.primaryDohUrl, spec.primaryDohUrl, queryWire)?.let {
                 return Pair(it, spec.name)
             }
         }
 
         // 2. Secondary IP-bootstrapped DoH (https://8.8.4.4/dns-query)
         if (spec.secondaryDohUrl.startsWith("https://")) {
-            queryDohUrl(spec.secondaryDohUrl, queryWire)?.let {
+            tryEndpoint(spec.secondaryDohUrl, spec.secondaryDohUrl, queryWire)?.let {
                 return Pair(it, spec.name)
             }
         }
@@ -94,12 +145,12 @@ class DohClient(private val vpnService: VpnService?) {
         } else {
             FilterMetadata.upstreamById("google")
         }
-        queryDohUrl(backupSpec.primaryDohUrl, queryWire)?.let {
+        tryEndpoint(backupSpec.primaryDohUrl, backupSpec.primaryDohUrl, queryWire)?.let {
             return Pair(it, "${backupSpec.name} (Failover)")
         }
 
-        // 4. Optional Hotel/Cafe Wi-Fi Captive Portal Helper
-        if (VellumPrefs.captivePortalFallback) {
+        // 4. Optional Hotel/Cafe Wi-Fi Captive Portal Helper (plain UDP, last resort)
+        if (OmitPrefs.captivePortalFallback) {
             queryProtectedUdp(spec.bootstrapUdpIp, queryWire)?.let {
                 return Pair(it, "${spec.name} (Portal)")
             }
@@ -109,19 +160,21 @@ class DohClient(private val vpnService: VpnService?) {
     }
 
     private fun queryDohUrl(endpointUrl: String, queryWire: ByteArray): ByteArray? {
+        var conn: HttpsURLConnection? = null
         return try {
             val url = URL(endpointUrl)
-            val conn = (url.openConnection() as HttpsURLConnection).apply {
+            conn = (url.openConnection() as HttpsURLConnection).apply {
                 sslSocketFactory = protectedSslFactory
                 requestMethod = "POST"
-                connectTimeout = 3200
-                readTimeout = 3800
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
                 doInput = true
                 doOutput = true
                 useCaches = false
+                instanceFollowRedirects = false
                 setRequestProperty("Content-Type", "application/dns-message")
                 setRequestProperty("Accept", "application/dns-message")
-                setRequestProperty("Connection", "keep-alive")
+                setRequestProperty("User-Agent", "Omit-Android/2.5")
                 setFixedLengthStreamingMode(queryWire.size)
             }
             conn.outputStream.use { out ->
@@ -137,7 +190,7 @@ class DohClient(private val vpnService: VpnService?) {
                         val r = inp.read(buf)
                         if (r <= 0) break
                         total += r
-                        if (total > 8192) return null
+                        if (total > MAX_RESPONSE_BYTES) return null
                         baos.write(buf, 0, r)
                     }
                 }
@@ -148,6 +201,8 @@ class DohClient(private val vpnService: VpnService?) {
             }
         } catch (_: Throwable) {
             null
+        } finally {
+            try { conn?.disconnect() } catch (_: Throwable) {}
         }
     }
 
@@ -156,7 +211,7 @@ class DohClient(private val vpnService: VpnService?) {
         return try {
             sock = DatagramSocket()
             vpnService?.protect(sock)
-            sock.soTimeout = 2200
+            sock.soTimeout = UDP_TIMEOUT_MS
             val addr = InetAddress.getByName(serverIp)
             sock.send(DatagramPacket(queryWire, queryWire.size, addr, 53))
             val respBuf = ByteArray(2048)
@@ -168,5 +223,14 @@ class DohClient(private val vpnService: VpnService?) {
         } finally {
             try { sock?.close() } catch (_: Throwable) {}
         }
+    }
+
+    private companion object {
+        // Tuned for 2G/3G and congested Wi-Fi: too-short timeouts turn into SERVFAILs.
+        const val CONNECT_TIMEOUT_MS = 3500
+        const val READ_TIMEOUT_MS = 4500
+        const val UDP_TIMEOUT_MS = 2500
+        const val MAX_RESPONSE_BYTES = 8192
+        const val FAILURE_COOLDOWN_MS = 20_000L
     }
 }

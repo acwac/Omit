@@ -97,12 +97,12 @@ jobs:
           npm install
           npx tauri build
           New-Item -ItemType Directory -Force -Path ../dist-windows | Out-Null
-          $nsis = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($nsis) {
-            Copy-Item $nsis.FullName ../dist-windows/Omit-Windows.exe
-          } else {
-            Copy-Item "src-tauri/target/release/omit-windows.exe" ../dist-windows/Omit-Windows.exe
+          $nsis = Get-ChildItem -Path "src-tauri/release/bundle/nsis/*.exe","src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsis) {
+            throw "NSIS installer was not produced. Check the tauri build output."
           }
+          Copy-Item $nsis.FullName ../dist-windows/Omit-Windows.exe
+          Get-Item ../dist-windows/Omit-Windows.exe | Select-Object Name, Length
 
       - name: Upload Omit-Windows.exe Artifact
         uses: actions/upload-artifact@v7

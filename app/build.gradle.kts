@@ -11,8 +11,8 @@ android {
         applicationId = "app.omit.shield"
         minSdk = 26
         targetSdk = 34
-        versionCode = 210
-        versionName = "2.1.0"
+        versionCode = 250
+        versionName = "2.5.0"
     }
 
     buildTypes {

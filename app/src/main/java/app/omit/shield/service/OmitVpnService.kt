@@ -19,8 +19,8 @@ import android.system.OsConstants
 import android.util.LruCache
 import app.omit.shield.R
 import app.omit.shield.data.FilterMetadata
+import app.omit.shield.data.OmitPrefs
 import app.omit.shield.data.ShieldState
-import app.omit.shield.data.VellumPrefs
 import app.omit.shield.dns.BlockEngine
 import app.omit.shield.dns.BlockVerdict
 import app.omit.shield.dns.DnsPacket
@@ -37,7 +37,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
-class VellumVpnService : VpnService() {
+class OmitVpnService : VpnService() {
 
     companion object {
         const val ACTION_START = "app.omit.shield.START"
@@ -45,8 +45,14 @@ class VellumVpnService : VpnService() {
         const val ACTION_STOP = "app.omit.shield.STOP"
         const val ACTION_PAUSE_60S = "app.omit.shield.PAUSE_60S"
         const val ACTION_RESUME = "app.omit.shield.RESUME"
-        private const val CHANNEL_ID = "vellum_quiet_status_v2"
+        private const val CHANNEL_ID = "omit_quiet_status_v2"
         private const val NOTIF_ID = 1042
+
+        // Virtual tunnel addresses. All DNS traffic to these is intercepted by the TUN.
+        const val TUN_IPV4_GATEWAY = "10.215.173.1"
+        const val TUN_IPV4_DNS = "10.215.173.2"
+        const val TUN_IPV6_GATEWAY = "fd00:7665:6c6c::1"
+        const val TUN_IPV6_DNS = "fd00:7665:6c6c::2"
 
         fun detectStrictPrivateDnsHost(context: Context): String? {
             return try {
@@ -71,6 +77,8 @@ class VellumVpnService : VpnService() {
     private var activeTunPfd: ParcelFileDescriptor? = null
     @Volatile
     private var pauseUntilEpochMs: Long = 0L
+    @Volatile
+    private var lastForwarders: List<String> = emptyList()
 
     // Scale down to 0 threads after 25s idle so zero worker threads sit in RAM overnight
     private val queryPool = ThreadPoolExecutor(
@@ -78,9 +86,19 @@ class VellumVpnService : VpnService() {
         3,
         25L,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(128)
+        LinkedBlockingQueue(256)
     ) { r ->
-        Thread(r, "vellum-doh-worker").apply { isDaemon = true }
+        Thread(r, "omit-doh-worker").apply { isDaemon = true }
+    }
+
+    private val resolverPool = ThreadPoolExecutor(
+        0,
+        1,
+        30L,
+        TimeUnit.SECONDS,
+        LinkedBlockingQueue(16)
+    ) { r ->
+        Thread(r, "omit-system-resolver").apply { isDaemon = true }
     }
 
     // 2048-entry RAM DNS cache drastically cuts repeated radio wakeups
@@ -92,12 +110,12 @@ class VellumVpnService : VpnService() {
         override fun run() {
             val rem = computePauseRemainingSec()
             if (rem > 0 && activeTunPfd != null) {
-                VellumPrefs.updateRuntimeState(ShieldState.PAUSED, rem)
+                OmitPrefs.updateRuntimeState(ShieldState.PAUSED, rem)
                 mainHandler.postDelayed(this, 1000L)
             } else {
                 pauseUntilEpochMs = 0L
                 if (activeTunPfd != null) {
-                    VellumPrefs.updateRuntimeState(computeActiveShieldState(), 0)
+                    OmitPrefs.updateRuntimeState(computeActiveShieldState(), 0)
                     updateForegroundNotification()
                 }
             }
@@ -112,7 +130,7 @@ class VellumVpnService : VpnService() {
     }
 
     private fun computeActiveShieldState(): ShieldState {
-        return if (VellumPrefs.offlineGameMode && VellumPrefs.offlineGamePackages.isNotEmpty()) {
+        return if (OmitPrefs.offlineGameMode && OmitPrefs.offlineGamePackages.isNotEmpty()) {
             ShieldState.OFFLINE_SANDBOX
         } else {
             ShieldState.PROTECTED
@@ -121,16 +139,16 @@ class VellumVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
-        VellumPrefs.init(applicationContext)
+        OmitPrefs.init(applicationContext)
         BlockEngine.ensureLoaded(applicationContext)
-        registerPrivateDnsMonitor()
+        registerNetworkMonitor()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        VellumPrefs.init(applicationContext)
+        OmitPrefs.init(applicationContext)
         when (intent?.action) {
             ACTION_STOP -> {
-                VellumPrefs.setDesiredEnabled(false)
+                OmitPrefs.setDesiredEnabled(false)
                 pauseUntilEpochMs = 0L
                 mainHandler.removeCallbacks(pauseTicker)
                 stopVpnTunnel()
@@ -149,22 +167,38 @@ class VellumVpnService : VpnService() {
                 pauseUntilEpochMs = 0L
                 mainHandler.removeCallbacks(pauseTicker)
                 if (activeTunPfd != null) {
-                    VellumPrefs.updateRuntimeState(computeActiveShieldState(), 0)
+                    OmitPrefs.updateRuntimeState(computeActiveShieldState(), 0)
                 }
                 updateForegroundNotification()
                 return START_STICKY
             }
             ACTION_RELOAD -> {
-                if (VellumPrefs.homeShieldEnabled) app.omit.shield.net.HomeShieldServer.start(this)
-                else app.omit.shield.net.HomeShieldServer.stop()
                 synchronized(dnsCache) { dnsCache.evictAll() }
-                if (VellumPrefs.shieldState != ShieldState.OFF || VellumPrefs.desiredEnabled) {
+                if (OmitPrefs.homeShieldEnabled) {
+                    // A failed bind (port taken) must switch the pref back off so the
+                    // UI never shows a proxy address that is not listening.
+                    if (!app.omit.shield.net.HomeShieldServer.start()) {
+                        OmitPrefs.setHomeShieldEnabled(false)
+                    }
+                } else {
+                    app.omit.shield.net.HomeShieldServer.stop()
+                }
+                // Rebuild only when per-app routing actually changed; a plain rule/engine
+                // toggle is picked up live by the running TUN loop (no churn, no flicker).
+                if (needsTunnelRebuild()) {
+                    startForegroundWithNotification()
+                    startOrRebuildTunnel()
+                } else if (activeTunPfd != null) {
+                    OmitPrefs.updateRuntimeState(computeActiveShieldState(), 0)
+                    updateForegroundNotification()
+                } else if (OmitPrefs.desiredEnabled) {
+                    startForegroundWithNotification()
                     startOrRebuildTunnel()
                 }
                 return START_STICKY
             }
             else -> {
-                VellumPrefs.setDesiredEnabled(true)
+                OmitPrefs.setDesiredEnabled(true)
                 pauseUntilEpochMs = 0L
                 startForegroundWithNotification()
                 startOrRebuildTunnel()
@@ -173,8 +207,30 @@ class VellumVpnService : VpnService() {
         }
     }
 
+    /**
+     * The TUN only needs rebuilding when the set of routed/bypassed apps changes or the
+     * Offline-Lock sandbox toggles. Everything else is read live from OmitPrefs.
+     */
+    private fun needsTunnelRebuild(): Boolean {
+        return routingSignature() != lastRoutingSignature
+    }
+
+    @Volatile
+    private var lastRoutingSignature: String = ""
+
+    private fun routingSignature(): String {
+        val offline = OmitPrefs.offlineGameMode && OmitPrefs.offlineGamePackages.isNotEmpty()
+        return buildString {
+            append(if (offline) "sandbox" else "split")
+            append('|')
+            append(OmitPrefs.bypassPackages.sorted().joinToString(","))
+            append('|')
+            append(if (offline) OmitPrefs.offlineGamePackages.sorted().joinToString(",") else "")
+        }
+    }
+
     override fun onRevoke() {
-        VellumPrefs.setDesiredEnabled(false)
+        OmitPrefs.setDesiredEnabled(false)
         pauseUntilEpochMs = 0L
         mainHandler.removeCallbacks(pauseTicker)
         stopVpnTunnel()
@@ -185,22 +241,30 @@ class VellumVpnService : VpnService() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(pauseTicker)
-        unregisterPrivateDnsMonitor()
+        unregisterNetworkMonitor()
         stopVpnTunnel()
         queryPool.shutdownNow()
+        resolverPool.shutdownNow()
         super.onDestroy()
     }
 
-    private fun registerPrivateDnsMonitor() {
+    private fun registerNetworkMonitor() {
         try {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-            VellumPrefs.updatePrivateDnsWarning(detectStrictPrivateDnsHost(this))
+            OmitPrefs.updatePrivateDnsWarning(detectStrictPrivateDnsHost(this))
             val cb = object : ConnectivityManager.NetworkCallback() {
                 override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         val host = linkProperties.privateDnsServerName?.takeIf { it.isNotBlank() }
-                        VellumPrefs.updatePrivateDnsWarning(host)
+                        OmitPrefs.updatePrivateDnsWarning(host)
                     }
+                    // Keep a copy of the network's real resolvers for the recursive fallback.
+                    val servers = try {
+                        linkProperties.dnsServers.mapNotNull { it.hostAddress }
+                    } catch (_: Throwable) {
+                        emptyList()
+                    }
+                    if (servers.isNotEmpty()) lastForwarders = servers
                 }
             }
             cm.registerDefaultNetworkCallback(cb)
@@ -208,7 +272,7 @@ class VellumVpnService : VpnService() {
         } catch (_: Throwable) {}
     }
 
-    private fun unregisterPrivateDnsMonitor() {
+    private fun unregisterNetworkMonitor() {
         try {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             networkCallback?.let { cm?.unregisterNetworkCallback(it) }
@@ -222,14 +286,16 @@ class VellumVpnService : VpnService() {
         activeTunPfd = null
         try { oldPfd?.close() } catch (_: Throwable) {}
 
+        lastRoutingSignature = routingSignature()
+
         Thread({
             BlockEngine.ensureLoaded(applicationContext)
-            VellumPrefs.updatePrivateDnsWarning(detectStrictPrivateDnsHost(applicationContext))
+            OmitPrefs.updatePrivateDnsWarning(detectStrictPrivateDnsHost(applicationContext))
 
             val pfd = try {
-                buildSplitOrSandboxTun()
+                buildTunnel()
             } catch (_: Throwable) {
-                VellumPrefs.updateRuntimeState(ShieldState.OFF, 0)
+                OmitPrefs.updateRuntimeState(ShieldState.OFF, 0)
                 stopSelf()
                 return@Thread
             }
@@ -237,7 +303,7 @@ class VellumVpnService : VpnService() {
             if (pfd == null || sessionGen.get() != myGen) {
                 try { pfd?.close() } catch (_: Throwable) {}
                 if (sessionGen.get() == myGen) {
-                    VellumPrefs.updateRuntimeState(ShieldState.OFF, 0)
+                    OmitPrefs.updateRuntimeState(ShieldState.OFF, 0)
                     stopSelf()
                 }
                 return@Thread
@@ -246,13 +312,13 @@ class VellumVpnService : VpnService() {
             activeTunPfd = pfd
             val rem = computePauseRemainingSec()
             if (rem > 0) {
-                VellumPrefs.updateRuntimeState(ShieldState.PAUSED, rem)
+                OmitPrefs.updateRuntimeState(ShieldState.PAUSED, rem)
             } else {
-                VellumPrefs.updateRuntimeState(computeActiveShieldState(), 0)
+                OmitPrefs.updateRuntimeState(computeActiveShieldState(), 0)
             }
             updateForegroundNotification()
 
-            val dohClient = DohClient(this@VellumVpnService)
+            val dohClient = DohClient(this@OmitVpnService)
             val fis = FileInputStream(pfd.fileDescriptor)
             val fos = FileOutputStream(pfd.fileDescriptor)
             val writeLock = Any()
@@ -283,10 +349,10 @@ class VellumVpnService : VpnService() {
 
                     val startNs = System.nanoTime()
                     val isPaused = computePauseRemainingSec() > 0
-                    val blockTtlSec = if (VellumPrefs.antiStormTtl) 300 else 15
+                    val blockTtlSec = if (OmitPrefs.antiStormTtl) 300 else 15
 
                     // Strip HTTPS/SVCB Type 65 when Browser DoH Guard is enabled to prevent ECH/DoH bypass
-                    if (!isPaused && parsedDns.qtype == 65 && VellumPrefs.blockDohCanary) {
+                    if (!isPaused && parsedDns.qtype == 65 && OmitPrefs.blockDohCanary) {
                         val emptyNoErr = DnsPacket.buildBlockedResponse(
                             packetBuf, parsedIp.dnsOffset, parsedDns, nxdomain = false, ttlSeconds = blockTtlSec
                         )
@@ -297,11 +363,13 @@ class VellumVpnService : VpnService() {
                     val verdict = if (isPaused) {
                         BlockVerdict(VerdictType.ALLOWED, 0, "Paused (60s)")
                     } else {
-                        BlockEngine.checkDomain(parsedDns.qname)
+                        BlockEngine.checkDomain(parsedDns.qname, parsedDns.qtype)
                     }
 
                     if (verdict.isBlocked) {
                         val nxdomain = verdict.type == VerdictType.BLOCKED_CANARY_NXDOMAIN
+                        // BLOCKED_EMPTY keeps the same synthetic 0.0.0.0 answer but without
+                        // NXDOMAIN so AAAA-only clients fall back cleanly to IPv4.
                         val syntheticDns = DnsPacket.buildBlockedResponse(
                             queryBuf = packetBuf,
                             queryOffset = parsedIp.dnsOffset,
@@ -313,7 +381,7 @@ class VellumVpnService : VpnService() {
                         writeTunPacket(fos, writeLock, outIp)
 
                         val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).toInt()
-                        VellumPrefs.recordQuery(
+                        OmitPrefs.recordQuery(
                             domain = parsedDns.qname,
                             qtype = parsedDns.qtypeName(),
                             blocked = true,
@@ -331,7 +399,7 @@ class VellumVpnService : VpnService() {
                     if (cached != null && cached.expiresAtMs > nowMs) {
                         val cachedWire = DnsPacket.cloneWithTxId(cached.wire, parsedDns.txId)
                         writeTunPacket(fos, writeLock, IpUdpPacket.buildUdpResponse(parsedIp, cachedWire))
-                        VellumPrefs.recordQuery(
+                        OmitPrefs.recordQuery(
                             domain = parsedDns.qname,
                             qtype = parsedDns.qtypeName(),
                             blocked = false,
@@ -343,17 +411,19 @@ class VellumVpnService : VpnService() {
                         continue
                     }
 
+                    // Capture an immutable copy of the query for the async upstream call.
                     val dnsQueryBytes = packetBuf.copyOfRange(
                         parsedIp.dnsOffset,
                         parsedIp.dnsOffset + parsedIp.dnsLength
                     )
+                    val responderIp = parsedIp
                     queryPool.execute {
                         handleUpstreamResolution(
                             myGen = myGen,
                             dohClient = dohClient,
                             fos = fos,
                             writeLock = writeLock,
-                            parsedIp = parsedIp,
+                            parsedIp = responderIp,
                             parsedDns = parsedDns,
                             dnsQueryBytes = dnsQueryBytes,
                             cacheKey = cacheKey,
@@ -370,10 +440,10 @@ class VellumVpnService : VpnService() {
                 if (sessionGen.get() == myGen) {
                     try { pfd.close() } catch (_: Throwable) {}
                     activeTunPfd = null
-                    VellumPrefs.updateRuntimeState(ShieldState.OFF, 0)
+                    OmitPrefs.updateRuntimeState(ShieldState.OFF, 0)
                 }
             }
-        }, "vellum-tun-loop-$myGen").apply {
+        }, "omit-tun-loop-$myGen").apply {
             priority = Thread.NORM_PRIORITY + 1
             start()
         }
@@ -393,19 +463,26 @@ class VellumVpnService : VpnService() {
         startNs: Long
     ) {
         if (sessionGen.get() != myGen) return
-        val resolved = dohClient.resolve(dnsQueryBytes)
+        var resolved = dohClient.resolve(dnsQueryBytes)
+        var usedRecursive = false
+        if (resolved == null) {
+            // Every encrypted/plain upstream failed (captive portal, hotel Wi-Fi, ISP
+            // hijack). Fall back to the OS resolver so the device never loses internet.
+            resolved = resolveViaSystem(parsedDns)
+            usedRecursive = resolved != null
+        }
         val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs).toInt()
 
         if (resolved == null) {
             val servFail = DnsPacket.buildServFailResponse(dnsQueryBytes, 0, parsedDns)
             writeTunPacket(fos, writeLock, IpUdpPacket.buildUdpResponse(parsedIp, servFail))
-            VellumPrefs.recordQuery(
+            OmitPrefs.recordQuery(
                 domain = parsedDns.qname,
                 qtype = parsedDns.qtypeName(),
                 blocked = false,
                 cached = false,
                 cnameCloaked = false,
-                reason = "Upstream Timeout",
+                reason = "Upstream Unreachable",
                 latencyMs = elapsedMs
             )
             return
@@ -415,7 +492,7 @@ class VellumVpnService : VpnService() {
         val inspection = DnsPacket.inspectResponse(upstreamWire)
 
         // Deep CNAME Uncloaking check
-        if (!isPaused && VellumPrefs.cnameUncloak && inspection != null && inspection.cnameTargets.isNotEmpty()) {
+        if (!isPaused && OmitPrefs.cnameUncloak && inspection != null && inspection.cnameTargets.isNotEmpty()) {
             for (cnameTarget in inspection.cnameTargets) {
                 val cnameVerdict = BlockEngine.checkDomain(cnameTarget)
                 if (cnameVerdict.isBlocked) {
@@ -427,7 +504,7 @@ class VellumVpnService : VpnService() {
                         ttlSeconds = blockTtlSec
                     )
                     writeTunPacket(fos, writeLock, IpUdpPacket.buildUdpResponse(parsedIp, synth))
-                    VellumPrefs.recordQuery(
+                    OmitPrefs.recordQuery(
                         domain = parsedDns.qname,
                         qtype = parsedDns.qtypeName(),
                         blocked = true,
@@ -445,11 +522,13 @@ class VellumVpnService : VpnService() {
         writeTunPacket(fos, writeLock, IpUdpPacket.buildUdpResponse(parsedIp, finalWire))
 
         val ttlSec = (inspection?.minTtlSec ?: 300).coerceIn(180, 3600)
+        // Never cache a fallback answer for long: a captive portal can answer with junk.
+        val effectiveTtl = if (usedRecursive) 60 else ttlSec
         synchronized(dnsCache) {
-            dnsCache.put(cacheKey, CachedDnsEntry(finalWire, System.currentTimeMillis() + ttlSec * 1000L))
+            dnsCache.put(cacheKey, CachedDnsEntry(finalWire, System.currentTimeMillis() + effectiveTtl * 1000L))
         }
 
-        VellumPrefs.recordQuery(
+        OmitPrefs.recordQuery(
             domain = parsedDns.qname,
             qtype = parsedDns.qtypeName(),
             blocked = false,
@@ -460,6 +539,21 @@ class VellumVpnService : VpnService() {
         )
     }
 
+    /**
+     * Hard fallback: ask the OS/network resolver (via InetAddress) and synthesise an
+     * A/AAAA answer. Used only when every DoH provider is unreachable.
+     */
+    private fun resolveViaSystem(parsedDns: ParsedDnsQuery): Pair<ByteArray, String>? {
+        if (parsedDns.qtype != 1 && parsedDns.qtype != 28) return null
+        return try {
+            val addresses = java.net.InetAddress.getAllByName(parsedDns.qname)
+            val bytes = DnsPacket.buildAddressAnswer(parsedDns, addresses.map { it.address }, ttlSeconds = 60)
+            if (bytes != null) Pair(bytes, "System Resolver") else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun writeTunPacket(fos: FileOutputStream, lock: Any, packet: ByteArray) {
         try {
             synchronized(lock) {
@@ -468,9 +562,9 @@ class VellumVpnService : VpnService() {
         } catch (_: Throwable) {}
     }
 
-    private fun buildSplitOrSandboxTun(): ParcelFileDescriptor? {
-        val offlineGames = VellumPrefs.offlineGamePackages
-        val useOfflineSandbox = VellumPrefs.offlineGameMode && offlineGames.isNotEmpty()
+    private fun buildTunnel(): ParcelFileDescriptor? {
+        val offlineGames = OmitPrefs.offlineGamePackages
+        val useOfflineSandbox = OmitPrefs.offlineGameMode && offlineGames.isNotEmpty()
 
         if (useOfflineSandbox) {
             val builder = Builder()
@@ -479,10 +573,10 @@ class VellumVpnService : VpnService() {
                 .setBlocking(true)
                 .allowFamily(OsConstants.AF_INET)
                 .allowFamily(OsConstants.AF_INET6)
-                .addAddress("10.215.173.1", 30)
-                .addDnsServer("10.215.173.2")
-                .addAddress("fd00:7665:6c6c::1", 126)
-                .addDnsServer("fd00:7665:6c6c::2")
+                .addAddress(TUN_IPV4_GATEWAY, 30)
+                .addDnsServer(TUN_IPV4_DNS)
+                .addAddress(TUN_IPV6_GATEWAY, 126)
+                .addDnsServer(TUN_IPV6_DNS)
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0)
 
@@ -506,7 +600,7 @@ class VellumVpnService : VpnService() {
                 return builder.establish()
             }
             // If none of the marked games remain installed, reset game mode & fall back cleanly
-            VellumPrefs.setOfflineGameMode(false)
+            OmitPrefs.setOfflineGameMode(false)
         }
 
         return buildStandardDnsSplitTun()
@@ -519,20 +613,20 @@ class VellumVpnService : VpnService() {
             .setBlocking(true)
             .allowFamily(OsConstants.AF_INET)
             .allowFamily(OsConstants.AF_INET6)
-            .addAddress("10.215.173.1", 30)
-            .addDnsServer("10.215.173.2")
-            .addRoute("10.215.173.2", 32)
+            .addAddress(TUN_IPV4_GATEWAY, 30)
+            .addDnsServer(TUN_IPV4_DNS)
+            .addRoute(TUN_IPV4_DNS, 32)
             .addRoute("198.18.0.0", 15)
-            .addAddress("fd00:7665:6c6c::1", 126)
-            .addDnsServer("fd00:7665:6c6c::2")
-            .addRoute("fd00:7665:6c6c::2", 128)
+            .addAddress(TUN_IPV6_GATEWAY, 126)
+            .addDnsServer(TUN_IPV6_DNS)
+            .addRoute(TUN_IPV6_DNS, 128)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
 
         try { builder.addDisallowedApplication(packageName) } catch (_: Throwable) {}
-        for (pkg in VellumPrefs.bypassPackages) {
+        for (pkg in OmitPrefs.bypassPackages) {
             if (pkg.isNotBlank() && pkg != packageName) {
                 try { builder.addDisallowedApplication(pkg) } catch (_: Throwable) {}
             }
@@ -549,8 +643,8 @@ class VellumVpnService : VpnService() {
         val old = activeTunPfd
         activeTunPfd = null
         try { old?.close() } catch (_: Throwable) {}
-        VellumPrefs.flushStats()
-        VellumPrefs.updateRuntimeState(ShieldState.OFF, 0)
+        OmitPrefs.flushStats()
+        OmitPrefs.updateRuntimeState(ShieldState.OFF, 0)
     }
 
     private fun startForegroundWithNotification() {
@@ -595,7 +689,7 @@ class VellumVpnService : VpnService() {
         val openPi = PendingIntent.getActivity(
             this, 1, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val stopIntent = Intent(this, VellumVpnService::class.java).apply { action = ACTION_STOP }
+        val stopIntent = Intent(this, OmitVpnService::class.java).apply { action = ACTION_STOP }
         val stopPi = PendingIntent.getService(
             this, 2, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -603,11 +697,11 @@ class VellumVpnService : VpnService() {
         val pausedRem = computePauseRemainingSec()
         val title = when {
             pausedRem > 0 -> "Omit · Paused (${pausedRem}s)"
-            VellumPrefs.offlineGameMode && VellumPrefs.offlineGamePackages.isNotEmpty() -> "Omit · Offline Lock"
+            OmitPrefs.offlineGameMode && OmitPrefs.offlineGamePackages.isNotEmpty() -> "Omit · Offline Lock"
             else -> "Omit · Protected"
         }
-        val intensity = FilterMetadata.intensityTitleForMask(VellumPrefs.activeCategoryMask.get())
-        val upstreamName = FilterMetadata.upstreamById(VellumPrefs.upstreamId).name
+        val intensity = FilterMetadata.intensityTitleForMask(OmitPrefs.activeCategoryMask.get())
+        val upstreamName = FilterMetadata.upstreamById(OmitPrefs.upstreamId).name
         val subtitle = "$intensity · $upstreamName"
 
         return Notification.Builder(this, CHANNEL_ID)
@@ -616,6 +710,7 @@ class VellumVpnService : VpnService() {
             .setContentText(subtitle)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .setContentIntent(openPi)
             .addAction(Notification.Action.Builder(null, "Turn Off", stopPi).build())
             .build()

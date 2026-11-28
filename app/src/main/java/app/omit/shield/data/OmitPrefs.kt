@@ -28,8 +28,9 @@ data class DnsLogEntry(
     val latencyMs: Int
 )
 
-object VellumPrefs {
-    private const val PREF_NAME = "vellum_shield_prefs_v2"
+object OmitPrefs {
+    private const val PREF_NAME = "omit_shield_prefs_v2"
+    private const val LEGACY_PREF_NAME = "vellum_shield_prefs_v2"
 
     @Volatile private var initialized = false
     private lateinit var prefs: SharedPreferences
@@ -50,9 +51,13 @@ object VellumPrefs {
     @Volatile var cnameUncloak: Boolean = true
         private set
     @Volatile var ispUnblockEnabled: Boolean = true
+        private set
     @Volatile var smartContextMode: Boolean = true
+        private set
     @Volatile var trapIpEnabled: Boolean = true
+        private set
     @Volatile var homeShieldEnabled: Boolean = false
+        private set
     @Volatile var antiStormTtl: Boolean = true
         private set
     @Volatile var blockDohCanary: Boolean = true
@@ -106,7 +111,8 @@ object VellumPrefs {
         synchronized(this) {
             if (initialized) return
             val appCtx = context.applicationContext
-            prefs = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            prefs = migrateLegacyPrefs(appCtx)
+
             activeCategoryMask.set(prefs.getInt("category_mask", FilterMetadata.MASK_BALANCED))
             desiredEnabled = prefs.getBoolean("desired_enabled", true)
             offlineGameMode = prefs.getBoolean("offline_game_mode", false)
@@ -114,6 +120,10 @@ object VellumPrefs {
             customDohUrl = prefs.getString("custom_doh_url", "https://dns.google/dns-query") ?: "https://dns.google/dns-query"
 
             cnameUncloak = prefs.getBoolean("cname_uncloak", true)
+            ispUnblockEnabled = prefs.getBoolean("isp_unblock_enabled", true)
+            smartContextMode = prefs.getBoolean("smart_context_mode", true)
+            trapIpEnabled = prefs.getBoolean("trap_ip_enabled", true)
+            homeShieldEnabled = prefs.getBoolean("home_shield_enabled", false)
             antiStormTtl = prefs.getBoolean("anti_storm_ttl", true)
             blockDohCanary = prefs.getBoolean("block_doh_canary", true)
             captivePortalFallback = prefs.getBoolean("captive_portal_fallback", true)
@@ -137,6 +147,37 @@ object VellumPrefs {
 
             initialized = true
         }
+    }
+
+    /**
+     * One-time copy of the vellum_shield_prefs_v2 file into omit_shield_prefs_v2 so a
+     * rebranded build updates in place without dropping the user's rules and stats.
+     */
+    private fun migrateLegacyPrefs(appCtx: Context): SharedPreferences {
+        val fresh = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        try {
+            if (fresh.getBoolean("__legacy_migrated", false)) return fresh
+            val legacy = appCtx.getSharedPreferences(LEGACY_PREF_NAME, Context.MODE_PRIVATE)
+            val legacyAll = legacy.all
+            if (legacyAll.isNotEmpty()) {
+                val editor = fresh.edit()
+                for ((key, value) in legacyAll) {
+                    when (value) {
+                        is Boolean -> editor.putBoolean(key, value)
+                        is Int -> editor.putInt(key, value)
+                        is Long -> editor.putLong(key, value)
+                        is Float -> editor.putFloat(key, value)
+                        is Set<*> -> {
+                            @Suppress("UNCHECKED_CAST")
+                            editor.putStringSet(key, value as? Set<String> ?: emptySet())
+                        }
+                        is String -> editor.putString(key, value)
+                    }
+                }
+                editor.putBoolean("__legacy_migrated", true).apply()
+            }
+        } catch (_: Throwable) {}
+        return fresh
     }
 
     fun consumeFirstLaunchAutoStart(): Boolean {
@@ -171,6 +212,30 @@ object VellumPrefs {
                 l.invoke()
             }
         }
+    }
+
+    fun setHomeShieldEnabled(enabled: Boolean) {
+        homeShieldEnabled = enabled
+        prefs.edit().putBoolean("home_shield_enabled", enabled).apply()
+        notifyChanged()
+    }
+
+    fun setIspUnblockEnabled(enabled: Boolean) {
+        ispUnblockEnabled = enabled
+        prefs.edit().putBoolean("isp_unblock_enabled", enabled).apply()
+        notifyChanged()
+    }
+
+    fun setSmartContextMode(enabled: Boolean) {
+        smartContextMode = enabled
+        prefs.edit().putBoolean("smart_context_mode", enabled).apply()
+        notifyChanged()
+    }
+
+    fun setTrapIpEnabled(enabled: Boolean) {
+        trapIpEnabled = enabled
+        prefs.edit().putBoolean("trap_ip_enabled", enabled).apply()
+        notifyChanged()
     }
 
     fun setDarkModePref(dark: Boolean) {

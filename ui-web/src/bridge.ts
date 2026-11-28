@@ -27,7 +27,7 @@ export interface InstalledAppItem {
   hasIcon?: boolean;
 }
 
-export interface VellumStateSnapshot {
+export interface OmitStateSnapshot {
   dark: boolean;
   shield: ShieldState;
   countdown: number;
@@ -51,7 +51,7 @@ export interface VellumStateSnapshot {
   logs: DnsLogItem[];
 }
 
-interface NativeBridge {
+export interface NativeBridge {
   getStateJson(): string;
   getInstalledAppsJson(): string;
   setDarkMode(dark: boolean): void;
@@ -75,22 +75,100 @@ interface NativeBridge {
   setLogging(enabled: boolean): void;
   clearLogs(): void;
   openPrivateDnsSettings(): void;
+  isTvMode?(): boolean;
+  setIspUnblockEnabled?(enabled: boolean): void;
+  setSmartContextMode?(enabled: boolean): void;
+  getSpyStatsJson?(): string;
+  openExternalUrl?(url: string): void;
+  copyToClipboard?(text: string): void;
+  getBurnerEmailJson?(forceNew: boolean): string;
+  fetchBurnerEmailAsync?(forceNew: boolean): void;
+  fetchBurnerSmsNumbersAsync?(): void;
+  fetchBurnerSmsMessagesAsync?(digits: string): void;
+  getBurnerInboxJson?(): string;
+  getBurnerSmsNumbersJson?(): string;
+  getBurnerSmsMessagesJson?(digits: string): string;
+  setHomeShieldEnabled?(enabled: boolean): boolean;
+  getHomeShieldInfoJson?(): string;
+  getTamperWarning?(): string;
+  applyOtaPatch?(otaUrl: string, expectedSha256: string, patchCode: number): void;
+  checkUpdateJson?(): string;
+  checkUpdateAsync?(currentVersionCode: number): void;
+  getVersionCode?(): number;
+  downloadAndInstallUpdate?(apkUrl: string): void;
+}
+
+export interface UpdateInfo {
+  version: string;
+  versionCode: number;
+  notes: string;
+  apkUrl: string;
+  otaUrl: string;
+  otaSha256: string;
+  otaCode: number;
 }
 
 declare global {
   interface Window {
-    VellumAndroid?: NativeBridge;
-    __vellumOnNativeState?: (state: VellumStateSnapshot) => void;
-    __vellumOnNativeApps?: (apps: InstalledAppItem[]) => void;
-    __vellumOnToast?: (msg: string) => void;
-    __vellumHandleBack?: () => boolean;
+    OmitAndroid?: NativeBridge;
+    __omitOnNativeState?: (state: OmitStateSnapshot) => void;
+    __omitOnNativeApps?: (apps: InstalledAppItem[]) => void;
+    __omitOnToast?: (msg: string) => void;
+    __omitOnUpdate?: (info: UpdateInfo) => void;
+    __omitHandleBack?: () => boolean;
+    __TAURI__?: {
+      core?: { invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      [key: string]: unknown;
+    };
   }
 }
 
-export const isAndroidRuntime = (): boolean => typeof window !== "undefined" && !!window.VellumAndroid;
+/** The Android WebView bridge, or undefined when running in a browser. */
+export function androidBridge(): NativeBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.OmitAndroid;
+}
 
-const DEFAULT_FALLBACK_STATE: VellumStateSnapshot = {
-  dark: true,
+export const isAndroidRuntime = (): boolean => !!androidBridge();
+
+type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+
+function tauriInvoke(): TauriInvoke | undefined {
+  if (typeof window === "undefined") return undefined;
+  const invoke = window.__TAURI__?.core?.invoke;
+  return typeof invoke === "function" ? invoke : undefined;
+}
+
+export const isWindowsRuntime = (): boolean => !!tauriInvoke();
+
+/** True inside any packaged app shell (Android WebView or Windows desktop). */
+export const isNativeRuntime = (): boolean => isAndroidRuntime() || isWindowsRuntime();
+
+export const isTauriRuntime = isWindowsRuntime;
+
+const THEME_KEY = "omit-theme";
+
+function readStoredDark(fallback: boolean): boolean {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "light") return false;
+    if (saved === "dark") return true;
+  } catch {
+    /* storage can be unavailable in private webviews */
+  }
+  return fallback;
+}
+
+function storeDark(dark: boolean): void {
+  try {
+    localStorage.setItem(THEME_KEY, dark ? "dark" : "light");
+  } catch {
+    /* ignore */
+  }
+}
+
+const DEFAULT_FALLBACK_STATE: OmitStateSnapshot = {
+  dark: readStoredDark(true),
   shield: "protected",
   countdown: 60,
   intensity: "Balanced",
@@ -99,9 +177,9 @@ const DEFAULT_FALLBACK_STATE: VellumStateSnapshot = {
   dns: 0,
   customDohUrl: "https://dns.google/dns-query",
   gameMode: false,
-  offlineGameCount: 2,
-  blockedCount: 1284,
-  totalQueries: 7132,
+  offlineGameCount: 0,
+  blockedCount: 0,
+  totalQueries: 0,
   activeRules: 209332,
   privateDnsHost: "",
   allowDomains: [],
@@ -109,47 +187,52 @@ const DEFAULT_FALLBACK_STATE: VellumStateSnapshot = {
   customUrls: [],
   logging: true,
   syncing: false,
-  recentBlocked: [
-    { domain: "app-measurement.com", category: "Cross-App Trackers", time: "12s" },
-    { domain: "ads.unity3d.com", category: "Game & In-App Ads", time: "38s" },
-  ],
-  logs: [
-    { id: 1, domain: "app-measurement.com", time: "Now", status: "Blocked", category: "Cross-App Trackers" },
-    { id: 2, domain: "api.spotify.com", time: "4s", status: "Allowed", category: "Google DNS" },
-    { id: 3, domain: "ads.unity3d.com", time: "18s", status: "Blocked", category: "Game & In-App Ads" },
-    { id: 4, domain: "accounts.google.com", time: "25s", status: "Allowed", category: "Google DNS" },
-  ],
+  recentBlocked: [],
+  logs: [],
 };
 
 const DEFAULT_FALLBACK_APPS: InstalledAppItem[] = [
-  { pkg: "com.neon.arcadedrift", name: "Arcade Drift", initials: "AD", color: "#7768d9", isSystem: false, mode: "Offline Lock" },
   { pkg: "com.android.chrome", name: "Chrome", initials: "C", color: "#3f9875", isSystem: false, mode: "Protected" },
-  { pkg: "com.snapwork.hdfc", name: "HDFC Bank", initials: "H", color: "#477bc6", isSystem: false, mode: "Bypassed" },
-  { pkg: "com.twofingers.chess", name: "Pocket Chess", initials: "PC", color: "#cb8a39", isSystem: false, mode: "Offline Lock" },
   { pkg: "com.spotify.music", name: "Spotify", initials: "S", color: "#419b64", isSystem: false, mode: "Protected" },
   { pkg: "com.google.android.youtube", name: "YouTube", initials: "YT", color: "#db5a51", isSystem: false, mode: "Protected" },
 ];
 
-export function readInitialState(): VellumStateSnapshot {
-  if (window.VellumAndroid) {
+/** In-memory mirror of the demo state so the browser preview stays interactive. */
+let localState: OmitStateSnapshot | null = null;
+
+export function readInitialState(): OmitStateSnapshot {
+  const bridge = androidBridge();
+  if (bridge) {
     try {
-      return JSON.parse(window.VellumAndroid.getStateJson()) as VellumStateSnapshot;
+      return JSON.parse(bridge.getStateJson()) as OmitStateSnapshot;
     } catch {
-      return DEFAULT_FALLBACK_STATE;
+      return { ...DEFAULT_FALLBACK_STATE };
     }
   }
-  return DEFAULT_FALLBACK_STATE;
+  if (!localState) {
+    localState = {
+      ...DEFAULT_FALLBACK_STATE,
+      dark: readStoredDark(true),
+    };
+  }
+  return { ...localState };
+}
+
+export function persistLocalState(partial: Partial<OmitStateSnapshot>): void {
+  const current = localState ?? readInitialState();
+  localState = { ...current, ...partial };
 }
 
 export function readInitialApps(): InstalledAppItem[] {
-  if (window.VellumAndroid) {
+  const bridge = androidBridge();
+  if (bridge) {
     try {
-      return JSON.parse(window.VellumAndroid.getInstalledAppsJson()) as InstalledAppItem[];
+      return JSON.parse(bridge.getInstalledAppsJson()) as InstalledAppItem[];
     } catch {
       return [];
     }
   }
-  return DEFAULT_FALLBACK_APPS;
+  return isWindowsRuntime() ? [] : DEFAULT_FALLBACK_APPS.map((app) => ({ ...app }));
 }
 
 export interface SpyStatItem {
@@ -161,28 +244,51 @@ export interface SpyStatItem {
 }
 
 export function isTvMode(): boolean {
+  const bridge = androidBridge();
   try {
-    if ((window.VellumAndroid as unknown as { isTvMode?: () => boolean })?.isTvMode) {
-      return (window.VellumAndroid as unknown as { isTvMode: () => boolean }).isTvMode();
-    }
-  } catch { /* ignore */ }
-  return typeof window !== "undefined" && window.innerWidth >= 960 && window.innerHeight <= 800;
+    if (bridge?.isTvMode) return bridge.isTvMode();
+  } catch {
+    /* ignore */
+  }
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("tv") === "1";
 }
 
 export function readSpyStats(): SpyStatItem[] {
   try {
-    const fn = (window.VellumAndroid as unknown as { getSpyStatsJson?: () => string })?.getSpyStatsJson;
-    if (fn) return JSON.parse(fn()) as SpyStatItem[];
-  } catch { /* ignore */ }
+    const raw = androidBridge()?.getSpyStatsJson?.();
+    if (raw) return JSON.parse(raw) as SpyStatItem[];
+  } catch {
+    /* ignore */
+  }
   return [];
 }
 
 export function openExternalUrl(url: string): void {
-  try {
-    const fn = (window.VellumAndroid as unknown as { openExternalUrl?: (u: string) => void })?.openExternalUrl;
-    if (fn) { fn(url); return; }
-  } catch { /* ignore */ }
+  const bridge = androidBridge();
+  if (bridge?.openExternalUrl) {
+    try {
+      bridge.openExternalUrl(url);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+export function copyToClipboard(text: string): void {
+  try {
+    androidBridge()?.copyToClipboard?.(text);
+  } catch {
+    /* ignore */
+  }
+  try {
+    void navigator.clipboard?.writeText(text).catch(() => undefined);
+  } catch {
+    /* ignore */
+  }
 }
 
 export interface BurnerEmailState {
@@ -212,6 +318,7 @@ export interface BurnerSmsMsg {
 }
 
 export interface HomeShieldInfo {
+  enabled: boolean;
   lanIp: string;
   port: number;
   blockedCount: number;
@@ -219,52 +326,320 @@ export interface HomeShieldInfo {
 
 export function nativeGetBurnerEmail(forceNew: boolean): BurnerEmailState {
   try {
-    const fn = (window.VellumAndroid as unknown as { getBurnerEmailJson?: (f: boolean) => string })?.getBurnerEmailJson;
-    if (fn) return JSON.parse(fn(forceNew)) as BurnerEmailState;
-  } catch { /* ignore */ }
+    const raw = androidBridge()?.getBurnerEmailJson?.(forceNew);
+    if (raw) return JSON.parse(raw) as BurnerEmailState;
+  } catch {
+    /* ignore */
+  }
   return { address: "" };
 }
 
 export function nativeGetBurnerInbox(): BurnerEmailMsg[] {
   try {
-    const fn = (window.VellumAndroid as unknown as { getBurnerInboxJson?: () => string })?.getBurnerInboxJson;
-    if (fn) return JSON.parse(fn()) as BurnerEmailMsg[];
-  } catch { /* ignore */ }
+    const raw = androidBridge()?.getBurnerInboxJson?.();
+    if (raw) return JSON.parse(raw) as BurnerEmailMsg[];
+  } catch {
+    /* ignore */
+  }
   return [];
 }
 
 export function nativeGetBurnerSmsNumbers(): BurnerSmsNum[] {
   try {
-    const fn = (window.VellumAndroid as unknown as { getBurnerSmsNumbersJson?: () => string })?.getBurnerSmsNumbersJson;
-    if (fn) return JSON.parse(fn()) as BurnerSmsNum[];
-  } catch { /* ignore */ }
+    const raw = androidBridge()?.getBurnerSmsNumbersJson?.();
+    if (raw) return JSON.parse(raw) as BurnerSmsNum[];
+  } catch {
+    /* ignore */
+  }
   return [];
 }
 
 export function nativeGetBurnerSmsMessages(digits: string): BurnerSmsMsg[] {
   try {
-    const fn = (window.VellumAndroid as unknown as { getBurnerSmsMessagesJson?: (d: string) => string })?.getBurnerSmsMessagesJson;
-    if (fn) return JSON.parse(fn(digits)) as BurnerSmsMsg[];
-  } catch { /* ignore */ }
+    const raw = androidBridge()?.getBurnerSmsMessagesJson?.(digits);
+    if (raw) return JSON.parse(raw) as BurnerSmsMsg[];
+  } catch {
+    /* ignore */
+  }
   return [];
 }
 
-export function nativeSetHomeShield(enabled: boolean): void {
+export function nativeSetHomeShield(enabled: boolean): boolean {
+  const bridge = androidBridge();
+  if (!bridge?.setHomeShieldEnabled) return false;
   try {
-    const fn = (window.VellumAndroid as unknown as { setHomeShieldEnabled?: (e: boolean) => void })?.setHomeShieldEnabled;
-    if (fn) fn(enabled);
-  } catch { /* ignore */ }
+    return bridge.setHomeShieldEnabled(enabled) !== false;
+  } catch {
+    return false;
+  }
 }
 
 export function nativeGetHomeShieldInfo(): HomeShieldInfo {
   try {
-    const fn = (window.VellumAndroid as unknown as { getHomeShieldInfoJson?: () => string })?.getHomeShieldInfoJson;
-    if (fn) return JSON.parse(fn()) as HomeShieldInfo;
-  } catch { /* ignore */ }
-  return { lanIp: "192.168.1.10", port: 8080, blockedCount: 0 };
+    const raw = androidBridge()?.getHomeShieldInfoJson?.();
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<HomeShieldInfo> & { enabled?: boolean };
+      return {
+        enabled: Boolean(parsed.enabled),
+        lanIp: parsed.lanIp || "192.168.1.10",
+        port: parsed.port || 8080,
+        blockedCount: parsed.blockedCount ?? 0,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { enabled: false, lanIp: "192.168.1.10", port: 8080, blockedCount: 0 };
+}
+
+export function nativeGetTamperWarning(): string {
+  try {
+    return androidBridge()?.getTamperWarning?.() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setDarkMode(dark: boolean): void {
+  storeDark(dark);
+  persistLocalState({ dark });
+  try {
+    androidBridge()?.setDarkMode(dark);
+  } catch {
+    /* ignore */
+  }
+  const invoke = tauriInvoke();
+  if (invoke) void invoke("set_windows_theme", { dark }).catch(() => undefined);
+}
+
+export function nativeVersionCode(): number {
+  try {
+    return androidBridge()?.getVersionCode?.() ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+const LOCAL_UPDATE_KEY = "omit-update-seen";
+
+/** Returns true when the user has already dismissed this exact version. */
+export function isUpdateDismissed(versionCode: number): boolean {
+  try {
+    return localStorage.getItem(LOCAL_UPDATE_KEY) === String(versionCode);
+  } catch {
+    return false;
+  }
+}
+
+export function dismissUpdate(versionCode: number): void {
+  try {
+    localStorage.setItem(LOCAL_UPDATE_KEY, String(versionCode));
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface UpdateCheckResult {
+  available: boolean;
+  info: UpdateInfo | null;
+  error?: string;
+}
+
+/** Asks the native shell (Android) for version.json; falls back to a direct fetch in browsers. */
+export async function checkForUpdate(currentVersionCode: number): Promise<UpdateCheckResult> {
+  const bridge = androidBridge();
+  const checkUpdateAsync = bridge?.checkUpdateAsync;
+  if (bridge && checkUpdateAsync) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: UpdateCheckResult) => {
+        if (settled) return;
+        settled = true;
+        window.__omitOnUpdate = previousOnUpdate;
+        resolve(result);
+      };
+      const previousOnUpdate = window.__omitOnUpdate;
+      window.__omitOnUpdate = (info) => {
+        finish({
+          available: Boolean(info && info.versionCode > currentVersionCode),
+          info: info ?? null,
+        });
+      };
+      try {
+        checkUpdateAsync(currentVersionCode);
+      } catch (error) {
+        finish({ available: false, info: null, error: String(error) });
+      }
+      window.setTimeout(() => finish({ available: false, info: null, error: "timeout" }), 12000);
+    });
+  }
+  try {
+    const response = await fetch("./version.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const raw = (await response.json()) as Record<string, unknown>;
+    const info = normalizeUpdateInfo(raw);
+    return { available: Boolean(info && info.versionCode > currentVersionCode), info };
+  } catch (error) {
+    return { available: false, info: null, error: String(error) };
+  }
+}
+
+export function normalizeUpdateInfo(raw: Record<string, unknown> | null | undefined): UpdateInfo | null {
+  if (!raw) return null;
+  const android = (raw.android ?? raw) as Record<string, unknown>;
+  const version = String(android.versionName ?? raw.version ?? "");
+  const versionCode = Number(android.versionCode ?? raw.versionCode ?? 0);
+  if (!version || !Number.isFinite(versionCode) || versionCode <= 0) return null;
+  return {
+    version,
+    versionCode,
+    notes: String(android.notes ?? raw.notes ?? ""),
+    apkUrl: String(android.apkUrl ?? raw.androidApkUrl ?? ""),
+    otaUrl: String(android.otaUrl ?? raw.otaUrl ?? ""),
+    otaSha256: String(android.otaSha256 ?? raw.otaSha256 ?? ""),
+    otaCode: Number(android.otaCode ?? raw.otaCode ?? versionCode),
+  };
+}
+
+export function applyOtaUpdate(info: UpdateInfo): void {
+  const bridge = androidBridge();
+  if (bridge?.applyOtaPatch) {
+    bridge.applyOtaPatch(info.otaUrl, info.otaSha256, info.otaCode);
+    return;
+  }
+  openExternalUrl(info.apkUrl);
+}
+
+export function downloadAndInstallUpdate(info: UpdateInfo): void {
+  const bridge = androidBridge();
+  if (bridge?.downloadAndInstallUpdate) {
+    bridge.downloadAndInstallUpdate(info.apkUrl);
+    return;
+  }
+  const invoke = tauriInvoke();
+  if (invoke) {
+    void invoke("download_and_install_update", { exeUrl: info.apkUrl }).catch(() => undefined);
+    return;
+  }
+
+  openExternalUrl(info.apkUrl);
+}
+
+export interface WindowsStats {
+  total: number;
+  blocked: number;
+  active: boolean;
+  /** Rules present in the bundled blocklist (0 when the resource is missing). */
+  rules: number;
+  /** 8-bit category mask currently applied by the engine. */
+  mask: number;
+}
+
+export interface WindowsShieldStatus {
+  active: boolean;
+  listening: boolean;
+  admin: boolean;
+  message: string;
+}
+
+export async function windowsStats(): Promise<WindowsStats | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    const stats = await invoke<Partial<WindowsStats>>("get_windows_stats");
+    if (!stats) return null;
+    return {
+      total: Number(stats.total ?? 0),
+      blocked: Number(stats.blocked ?? 0),
+      active: Boolean(stats.active),
+      rules: Number(stats.rules ?? 0),
+      mask: Number(stats.mask ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function windowsShieldStatus(): Promise<WindowsShieldStatus | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    return await invoke<WindowsShieldStatus>("get_shield_status");
+  } catch {
+    return null;
+  }
+}
+
+export async function setWindowsShield(enable: boolean): Promise<boolean | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    return await invoke<boolean>("toggle_windows_shield", { enable });
+  } catch {
+    return false;
+  }
+}
+
+/** Pushes the full category mask (or one flipped bit) to the Windows engine. */
+export async function setWindowsCategoryMask(mask?: number, toggleIndex?: number): Promise<number | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    const args: Record<string, unknown> = {};
+    if (typeof mask === "number") args.mask = mask;
+    if (typeof toggleIndex === "number") args.toggleIndex = toggleIndex;
+    return await invoke<number>("set_windows_categories", args);
+  } catch {
+    return null;
+  }
+}
+
+/** Adds an allow/block rule to the Windows engine. */
+export async function setWindowsRule(domain: string, mode: "allow" | "block" | "clear"): Promise<boolean> {
+  const invoke = tauriInvoke();
+  if (!invoke) return false;
+  try {
+    return await invoke<boolean>("set_windows_rules", { domain, mode });
+  } catch {
+    return false;
+  }
+}
+
+/** Recent DNS decisions recorded by the Windows engine (newest first). */
+export async function getWindowsLogs(): Promise<DnsLogItem[] | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    const rows = await invoke<DnsLogItem[]>("get_windows_logs");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return null;
+  }
+}
+
+export async function clearWindowsLogs(): Promise<void> {
+  const invoke = tauriInvoke();
+  if (!invoke) return;
+  try {
+    await invoke("clear_windows_logs");
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function getWindowsRules(): Promise<{ allow: string[]; block: string[] } | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    const [allow, block] = await invoke<[string[], string[]]>("get_windows_rules");
+    return { allow: allow ?? [], block: block ?? [] };
+  } catch {
+    return null;
+  }
 }
 
 export function formatCompactCount(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 100_000) return `${(n / 1_000).toFixed(1)}k`;
   return n.toLocaleString("en-US");

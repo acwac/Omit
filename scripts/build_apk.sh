@@ -17,8 +17,34 @@ ANDROID_JAR="$ANDROID_SDK_ROOT/platforms/android-34/android.jar"
 KOTLINC="$KOTLIN_HOME/bin/kotlinc"
 KEYTOOL="$JAVA_HOME/bin/keytool"
 
-WORK_DIR="$(mktemp -d /tmp/vellum-build-XXXXXX)"
+WORK_DIR="$(mktemp -d /tmp/omit-build-XXXXXX)"
 trap 'rm -rf "$WORK_DIR"' EXIT
+
+# --- Guards: never ship a stale UI bundle or a placeholder rule table ---
+UI_INDEX="$REPO_ROOT/app/src/main/assets/ui/index.html"
+if [ ! -f "$UI_INDEX" ]; then
+  echo "ERROR: app/src/main/assets/ui/index.html is missing. Run 'npm run build' in ui-web/ first." >&2
+  exit 1
+fi
+if ! grep -q 'assets/index-' "$UI_INDEX"; then
+  echo "ERROR: the UI bundle in assets/ui looks unbundled. Re-run the Vite build." >&2
+  exit 1
+fi
+VBIN="$REPO_ROOT/app/src/main/assets/omit_starter.vbin"
+VBIN_RULES=$(python3 - "$VBIN" <<'EOF'
+import struct, sys
+with open(sys.argv[1], "rb") as f:
+    header = f.read(16)
+if len(header) < 16 or header[:8] != b"VELLUM01":
+    print(0)
+else:
+    print(struct.unpack(">i", header[8:12])[0])
+EOF
+)
+echo "      Rule table: ${VBIN_RULES} domains"
+if [ "${VBIN_RULES:-0}" -lt 1000 ]; then
+  echo "WARNING: only ${VBIN_RULES} starter rules are present. Run scripts/compile_blocklists.py to ship the full table." >&2
+fi
 
 echo "[1/5] Compiling Android resources with aapt2..."
 mkdir -p "$WORK_DIR/res_compiled" "$WORK_DIR/gen" "$WORK_DIR/classes" "$WORK_DIR/dex"

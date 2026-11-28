@@ -1,10 +1,12 @@
 {
-  "version": "2.4.3",
-  "versionCode": 243,
-  "minNativeCode": 230,
-  "releasedAt": "2026-11-14",
+  "version": "2.5.0",
+  "versionCode": 250,
+  "minNativeCode": 250,
+  "releasedAt": "2026-11-28",
   "androidApkUrl": "https://acwac.github.io/Omit/downloads/Omit.apk",
   "otaUrl": "https://acwac.github.io/Omit/downloads/ota-ui.zip",
+  "otaSha256": "",
+  "otaCode": 250,
   "windowsExeUrl": "https://acwac.github.io/Omit/downloads/Omit-Windows.exe",
-  "notes": "Omit 2.4.0: Instant ~90 KB In-App Delta Updates (OTA), Separate Burner Email & SMS OTP tab, and Whole-Home Wi-Fi Shield."
+  "notes": "Omit 2.5.0: full rebrand from Vellum, Android TV layout polish, Windows desktop fixes, faster encrypted DNS with automatic recovery, and a smarter in-app updater."
 }

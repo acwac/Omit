@@ -8,32 +8,32 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import app.omit.shield.data.FilterMetadata
 import app.omit.shield.data.ShieldState
-import app.omit.shield.data.VellumPrefs
+import app.omit.shield.data.OmitPrefs
 import app.omit.shield.ui.MainActivity
 
-class VellumTileService : TileService() {
+class OmitTileService : TileService() {
 
     private val listener: () -> Unit = { refreshTile() }
 
     override fun onStartListening() {
         super.onStartListening()
-        VellumPrefs.init(applicationContext)
-        VellumPrefs.addListener(listener)
+        OmitPrefs.init(applicationContext)
+        OmitPrefs.addListener(listener)
         refreshTile()
     }
 
     override fun onStopListening() {
-        VellumPrefs.removeListener(listener)
+        OmitPrefs.removeListener(listener)
         super.onStopListening()
     }
 
     override fun onClick() {
         super.onClick()
-        VellumPrefs.init(applicationContext)
-        val running = VellumPrefs.shieldState != ShieldState.OFF
+        OmitPrefs.init(applicationContext)
+        val running = OmitPrefs.shieldState != ShieldState.OFF
         if (running) {
-            val stopIntent = Intent(this, VellumVpnService::class.java).apply {
-                action = VellumVpnService.ACTION_STOP
+            val stopIntent = Intent(this, OmitVpnService::class.java).apply {
+                action = OmitVpnService.ACTION_STOP
             }
             startService(stopIntent)
             refreshTile(forceState = false)
@@ -57,8 +57,8 @@ class VellumTileService : TileService() {
                 }
             } else {
                 try {
-                    val startIntent = Intent(this, VellumVpnService::class.java).apply {
-                        action = VellumVpnService.ACTION_START
+                    val startIntent = Intent(this, OmitVpnService::class.java).apply {
+                        action = OmitVpnService.ACTION_START
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         startForegroundService(startIntent)
@@ -73,12 +73,12 @@ class VellumTileService : TileService() {
 
     private fun refreshTile(forceState: Boolean? = null) {
         val tile = qsTile ?: return
-        val active = forceState ?: (VellumPrefs.shieldState != ShieldState.OFF)
+        val active = forceState ?: (OmitPrefs.shieldState != ShieldState.OFF)
         tile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = "Omit"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             tile.subtitle = if (active) {
-                FilterMetadata.intensityTitleForMask(VellumPrefs.activeCategoryMask.get())
+                FilterMetadata.intensityTitleForMask(OmitPrefs.activeCategoryMask.get())
             } else {
                 "Off"
             }

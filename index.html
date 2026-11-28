@@ -1,13 +1,25 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Omit blocks ads, trackers, and ISP snooping on Android, Android TV, and Windows 10/11 with near-zero battery drain. Free, offline-first, no account." />
+  <meta name="theme-color" content="#111512" />
   <title>Omit — Quiet Ad, Tracker &amp; ISP Unblocker</title>
-  <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=2.2.0" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=2.5.0" />
+  <!-- Theme is applied before first paint so there is no light/dark flash. -->
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('omit-theme'); } catch (e) {}
+      var dark = saved !== 'light';
+      if (dark) document.documentElement.classList.add('dark');
+      document.addEventListener('DOMContentLoaded', function () {
+        var btn = document.getElementById('themeToggle');
+        if (btn) btn.textContent = dark ? 'Light mode' : 'Dark mode';
+      });
+    })();
+  </script>
   <style>
     :root {
       --bg: #f4f6f3;
@@ -20,6 +32,7 @@
       --accent-fg: #f4f6f3;
       --border: rgba(21, 27, 24, 0.09);
       --shadow: 0 18px 48px rgba(21, 27, 24, 0.06);
+      color-scheme: light;
     }
     html.dark {
       --bg: #111512;
@@ -32,49 +45,53 @@
       --accent-fg: #111512;
       --border: rgba(237, 242, 238, 0.09);
       --shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+      color-scheme: dark;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: var(--bg);
       color: var(--text);
       line-height: 1.55;
       transition: background 0.2s ease, color 0.2s ease;
+      -webkit-font-smoothing: antialiased;
     }
-    h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.025em; }
+    h1, h2, h3 { font-family: 'Manrope', 'Segoe UI', sans-serif; letter-spacing: -0.025em; }
     .container { max-width: 1040px; margin: 0 auto; padding: 24px 20px 64px; }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 32px; }
+    a { color: var(--accent); }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 32px; gap: 12px; flex-wrap: wrap; }
     .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 21px; font-family: 'Manrope', sans-serif; }
     .header-actions { display: flex; align-items: center; gap: 10px; }
-    .pill-badge { background: var(--accent-soft); color: var(--accent); padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; }
+    .pill-badge { background: var(--accent-soft); color: var(--accent); padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
     .theme-btn {
       background: var(--surface); border: 1px solid var(--border); color: var(--text);
       padding: 8px 14px; border-radius: 999px; font-weight: 600; cursor: pointer; font-size: 13px;
     }
+    .theme-btn:hover { border-color: var(--accent); }
     .hero-grid {
       display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 28px; align-items: center;
       background: var(--surface); border: 1px solid var(--border); border-radius: 30px;
       padding: 40px 36px; box-shadow: var(--shadow); margin-bottom: 24px;
     }
-    @media (max-width: 860px) { .hero-grid { grid-template-columns: 1fr; padding: 28px 22px; } }
     .hero-copy h1 { font-size: clamp(32px, 4.5vw, 46px); line-height: 1.1; margin: 14px 0 12px; }
     .hero-copy p { color: var(--text-muted); font-size: 16px; margin-bottom: 24px; max-width: 500px; }
     .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
-    .btn-primary {
-      background: var(--accent); color: var(--accent-fg); text-decoration: none;
+    .btn-primary, .btn-secondary {
       padding: 14px 22px; border-radius: 16px; font-weight: 700; font-size: 14.5px;
-      display: inline-flex; align-items: center; gap: 8px;
+      display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
     }
-    .btn-secondary {
-      background: var(--surface-muted); color: var(--text); text-decoration: none;
-      padding: 14px 22px; border-radius: 16px; font-weight: 700; font-size: 14.5px;
-      border: 1px solid var(--border);
+    .btn-primary { background: var(--accent); color: var(--accent-fg); }
+    .btn-secondary { background: var(--surface-muted); color: var(--text); border: 1px solid var(--border); }
+    .btn-primary:hover, .btn-secondary:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+    .btn-primary:focus-visible, .btn-secondary:focus-visible, .theme-btn:focus-visible, summary:focus-visible {
+      outline: 3px solid var(--accent); outline-offset: 2px;
     }
     .mock-device {
       background: var(--bg); border: 1px solid var(--border); border-radius: 24px;
       padding: 20px; display: flex; flex-direction: column; gap: 14px;
     }
-    .mock-top { display: flex; justify-content: space-between; align-items: center; }
+    .mock-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
     .mock-tabs { display: flex; gap: 6px; background: var(--surface-muted); padding: 4px; border-radius: 12px; }
     .mock-tab {
       border: none; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 700;
@@ -83,7 +100,7 @@
     .mock-tab.active { background: var(--surface); color: var(--text); }
     .mock-shield {
       background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
-      padding: 20px; text-align: center; cursor: pointer;
+      padding: 20px; text-align: center; cursor: pointer; width: 100%;
     }
     .mock-shield h3 { font-size: 17px; margin-top: 10px; }
     .mock-shield span { font-size: 12.5px; color: var(--text-muted); }
@@ -92,13 +109,39 @@
       padding: 24px 28px; margin-bottom: 24px; display: flex; flex-wrap: wrap;
       align-items: center; justify-content: space-between; gap: 16px;
     }
-    .update-card p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+    .update-card p { color: var(--text-muted); font-size: 14px; margin-top: 4px; max-width: 520px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-bottom: 24px; }
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 22px; }
     .card h3 { font-size: 17px; margin-bottom: 6px; }
     .card p { color: var(--text-muted); font-size: 14px; }
+    details {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+      padding: 16px 20px; margin-bottom: 10px;
+    }
+    details summary { cursor: pointer; font-weight: 700; font-size: 15px; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::after { content: '+'; color: var(--accent); font-weight: 800; }
+    details[open] summary::after { content: '–'; }
+    details p { color: var(--text-muted); font-size: 14px; margin-top: 10px; }
+    .platform-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 8px; }
+    .platform-card { display: flex; flex-direction: column; gap: 12px; }
+    .platform-card .btn-primary, .platform-card .btn-secondary { justify-content: center; }
+    .platform-meta { font-size: 12.5px; color: var(--text-muted); }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+    .section-head { margin: 34px 0 14px; }
+    .section-head h2 { font-size: 23px; }
+    .section-head p { color: var(--text-muted); font-size: 14px; }
     footer { text-align: center; color: var(--text-muted); font-size: 13px; margin-top: 28px; }
     footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    @media (max-width: 860px) {
+      .hero-grid { grid-template-columns: 1fr; padding: 28px 22px; }
+    }
+    @media (max-width: 420px) {
+      .container { padding: 16px 14px 48px; }
+      .hero-grid { padding: 22px 16px; border-radius: 24px; }
+      .update-card { padding: 20px 18px; border-radius: 20px; }
+      .btn-primary, .btn-secondary { width: 100%; justify-content: center; }
+    }
   </style>
 </head>
 <body>
@@ -113,17 +156,17 @@
         <span>Omit</span>
       </div>
       <div class="header-actions">
-        <span class="pill-badge" id="versionBadge">v2.0.0</span>
-        <button class="theme-btn" id="themeToggle">Light Mode</button>
+        <span class="pill-badge" id="versionBadge">v2.5.0</span>
+        <button class="theme-btn" id="themeToggle" type="button">Light mode</button>
       </div>
     </header>
 
     <section class="hero-grid">
       <div class="hero-copy">
-        <span class="pill-badge">Android &middot; TV &middot; Windows</span>
+        <span class="pill-badge">Android &middot; Android TV &middot; Windows</span>
         <h1>Silence ads &amp; trackers. Zero battery drain.</h1>
         <p>
-          Omit blocks ads, catches background spy apps, and opens ISP-blocked sites at full speed—without slowing down your phone, TV, or laptop.
+          Omit blocks ads, catches background spy apps, and opens ISP-blocked sites at full speed — without slowing down your phone, TV, or laptop.
         </p>
         <div class="cta-row">
           <a class="btn-primary" id="apkLink" href="./downloads/Omit.apk" download="Omit.apk">
@@ -138,32 +181,57 @@
       <div class="mock-device">
         <div class="mock-top">
           <strong style="font-size:13px;">Preview</strong>
-          <div class="mock-tabs">
-            <button class="mock-tab active" data-mode="phone">Phone</button>
-            <button class="mock-tab" data-mode="tv">TV</button>
-            <button class="mock-tab" data-mode="win">Windows</button>
+          <div class="mock-tabs" role="tablist" aria-label="Platform preview">
+            <button class="mock-tab active" data-mode="phone" type="button">Phone</button>
+            <button class="mock-tab" data-mode="tv" type="button">TV</button>
+            <button class="mock-tab" data-mode="win" type="button">Windows</button>
           </div>
         </div>
-        <div class="mock-shield" id="mockShield">
-          <svg width="56" height="56" viewBox="0 0 108 108" style="margin:0 auto;display:block;">
+        <button class="mock-shield" id="mockShield" type="button">
+          <svg width="56" height="56" viewBox="0 0 108 108" style="margin:0 auto;display:block;" aria-hidden="true">
             <rect width="108" height="108" rx="26" fill="var(--accent)" />
             <path fill="var(--accent-fg)" d="M 56.72,25.13 A 29.00,29.00 0 1,0 82.87,51.28 A 18.50,18.50 0 0,1 56.72,25.13 Z" />
             <circle fill="var(--accent-fg)" cx="69.50" cy="38.50" r="7.20" />
           </svg>
           <h3 id="mockStatusTitle">Protected &middot; Balanced</h3>
           <span id="mockStatusSub">Google Encrypted DNS &middot; Tap to pause</span>
-        </div>
+        </button>
       </div>
     </section>
 
     <section class="update-card" id="updateSection">
       <div>
-        <h3>Update Omit <span class="pill-badge" id="updateVersionPill">v2.0.0</span></h3>
-        <p>Already have Omit? Download and install right over your current app—all your settings stay saved.</p>
+        <h3>Update Omit <span class="pill-badge" id="updateVersionPill">v2.5.0</span></h3>
+        <p id="updateNotes">Already have Omit? Install this build right over your current app — every setting and custom rule stays saved.</p>
       </div>
       <div class="cta-row">
         <a class="btn-secondary" href="./downloads/Omit.apk" download="Omit.apk">Update Android / TV</a>
         <a class="btn-secondary" href="./downloads/Omit-Windows.exe" download="Omit-Windows.exe">Update Windows</a>
+      </div>
+    </section>
+
+    <div class="section-head">
+      <h2>Choose your platform</h2>
+      <p>One rule engine and one design across phone, TV, and Windows.</p>
+    </div>
+    <section class="grid platform-grid">
+      <div class="card platform-card">
+        <h3>Android phone &amp; tablet</h3>
+        <p>Android 8+ · one APK · installs over your current Omit build.</p>
+        <a class="btn-primary" href="./downloads/Omit.apk" download="Omit.apk">Download Omit.apk</a>
+        <span class="platform-meta" id="apkMeta">Signed release · updates in place</span>
+      </div>
+      <div class="card platform-card">
+        <h3>Android TV / Google TV / Fire TV</h3>
+        <p>Same APK with a 10-foot layout and full D-pad navigation.</p>
+        <a class="btn-secondary" href="./downloads/Omit.apk" download="Omit.apk">Download for TV</a>
+        <span class="platform-meta">Best with a Fire TV Stick or Google TV box</span>
+      </div>
+      <div class="card platform-card">
+        <h3>Windows 10 / 11</h3>
+        <p>System DNS shield, tray icon, and automatic DNS restore on exit.</p>
+        <a class="btn-primary" href="./downloads/Omit-Windows.exe" download="Omit-Windows.exe">Download Omit-Windows.exe</a>
+        <span class="platform-meta" id="exeMeta">Installer · restores your network on close</span>
       </div>
     </section>
 
@@ -186,75 +254,108 @@
       </div>
     </section>
 
+    <div class="badge-row" aria-label="At a glance">
+      <span class="pill-badge">209,332 built-in rules</span>
+      <span class="pill-badge">Encrypted DNS (DoH)</span>
+      <span class="pill-badge">~1% battery / day</span>
+      <span class="pill-badge">No account needed</span>
+      <span class="pill-badge">Works offline</span>
+    </div>
+
+    <div class="section-head">
+      <h2>Questions, answered honestly</h2>
+      <p>No marketing fog — here is exactly what Omit does and does not do.</p>
+    </div>
+    <details>
+      <summary>Does Omit drain my battery?</summary>
+      <p>No. Only DNS traffic is routed through Omit. Video, downloads, and games still travel over the OS kernel at full speed, so the daily battery cost stays around 1%.</p>
+    </details>
+    <details>
+      <summary>Can Omit break Google sign-in or Play Games?</summary>
+      <p>No. Login, OAuth, Play Games, and cloud-save hosts sit on a permanent safe list for every app, and Offline Lock only applies to apps you pick yourself.</p>
+    </details>
+    <details>
+      <summary>Does it hide my IP address?</summary>
+      <p>No. Omit is not a VPN relay — it unblocks ISP-level DNS and DPI blocks while keeping your real IP, so UPI, banking, and streaming never break. Country-locked catalogues still need a real VPN.</p>
+    </details>
+    <details>
+      <summary>What runs on Windows?</summary>
+      <p>The Windows app runs a small local DNS sinkhole with the same 200,000+ rule set, offers encrypted upstream DNS, and restores your adapter settings automatically when you exit or if it crashes.</p>
+    </details>
+    <details>
+      <summary>Is there an account or subscription?</summary>
+      <p>None. Omit is free, open source, works offline out of the box, and never asks you to sign in.</p>
+    </details>
+
     <footer>
-      <p>Omit &middot; <a href="https://github.com/acwac/Omit">GitHub</a></p>
+      <p>Omit &middot; <a href="https://github.com/acwac/Omit">GitHub</a> &middot; <a href="https://github.com/acwac/Omit/releases">Releases</a></p>
     </footer>
   </div>
 
   <script>
-    const html = document.documentElement;
-    const btn = document.getElementById('themeToggle');
-    const savedTheme = localStorage.getItem('omit-theme');
-    if (savedTheme === 'light') {
-      html.classList.remove('dark');
-      btn.textContent = 'Dark Mode';
-    } else {
-      html.classList.add('dark');
-      btn.textContent = 'Light Mode';
-    }
-    btn.addEventListener('click', () => {
-      const isDark = html.classList.toggle('dark');
-      localStorage.setItem('omit-theme', isDark ? 'dark' : 'light');
-      btn.textContent = isDark ? 'Light Mode' : 'Dark Mode';
-    });
-
-    // Auto-highlight primary platform button
-    const ua = navigator.userAgent.toLowerCase();
-    const apkBtn = document.getElementById('apkLink');
-    const exeBtn = document.getElementById('exeLink');
-    if (ua.includes('windows')) {
-      exeBtn.className = 'btn-primary';
-      apkBtn.className = 'btn-secondary';
-    }
-
-    if (new URLSearchParams(location.search).get('update') === '1') {
-      document.getElementById('updateSection').scrollIntoView({ behavior: 'smooth' });
-    }
-
-    let shieldOn = true;
-    const mockShield = document.getElementById('mockShield');
-    const mockTitle = document.getElementById('mockStatusTitle');
-    const mockSub = document.getElementById('mockStatusSub');
-    mockShield.addEventListener('click', () => {
-      shieldOn = !shieldOn;
-      mockTitle.textContent = shieldOn ? 'Protected · Balanced' : 'Paused · 60s';
-      mockSub.textContent = shieldOn ? 'Google Encrypted DNS · Tap to pause' : 'Tap to resume';
-    });
-
-    document.querySelectorAll('.mock-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('.mock-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        const mode = tab.dataset.mode;
-        if (mode === 'tv') {
-          mockTitle.textContent = 'Android TV · Protected';
-          mockSub.textContent = 'Quiet background ad blocking';
-        } else if (mode === 'win') {
-          mockTitle.textContent = 'Windows · Protected';
-          mockSub.textContent = 'System-wide ad & tracker shield';
-        } else {
-          mockTitle.textContent = 'Protected · Balanced';
-          mockSub.textContent = 'Google Encrypted DNS · Tap to pause';
-        }
+    (function () {
+      var html = document.documentElement;
+      var btn = document.getElementById('themeToggle');
+      btn.addEventListener('click', function () {
+        var isDark = html.classList.toggle('dark');
+        try { localStorage.setItem('omit-theme', isDark ? 'dark' : 'light'); } catch (e) {}
+        btn.textContent = isDark ? 'Light mode' : 'Dark mode';
       });
-    });
 
-    fetch('./version.json').then(r => r.json()).then(d => {
-      if (d.version) {
-        document.getElementById('versionBadge').textContent = 'v' + d.version;
-        document.getElementById('updateVersionPill').textContent = 'v' + d.version;
+      // Highlight the download for the visitor's platform.
+      var ua = navigator.userAgent.toLowerCase();
+      var apkBtn = document.getElementById('apkLink');
+      var exeBtn = document.getElementById('exeLink');
+      if (ua.indexOf('windows') !== -1) {
+        exeBtn.className = 'btn-primary';
+        apkBtn.className = 'btn-secondary';
       }
-    }).catch(() => {});
+
+      if (new URLSearchParams(location.search).get('update') === '1') {
+        document.getElementById('updateSection').scrollIntoView({ behavior: 'smooth' });
+      }
+
+      var shieldOn = true;
+      var mockShield = document.getElementById('mockShield');
+      var mockTitle = document.getElementById('mockStatusTitle');
+      var mockSub = document.getElementById('mockStatusSub');
+      function setMock(title, sub) {
+        mockTitle.textContent = title;
+        mockSub.textContent = sub;
+      }
+      mockShield.addEventListener('click', function () {
+        shieldOn = !shieldOn;
+        if (shieldOn) setMock('Protected · Balanced', 'Google Encrypted DNS · Tap to pause');
+        else setMock('Paused · 60s', 'Tap to resume');
+      });
+
+      var tabs = document.querySelectorAll('.mock-tab');
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          tabs.forEach(function (t) { t.classList.remove('active'); });
+          tab.classList.add('active');
+          var mode = tab.dataset.mode;
+          if (mode === 'tv') setMock('Android TV · Protected', 'Quiet background ad blocking');
+          else if (mode === 'win') setMock('Windows · Protected', 'System-wide ad & tracker shield');
+          else setMock('Protected · Balanced', 'Google Encrypted DNS · Tap to pause');
+          shieldOn = true;
+        });
+      });
+
+      fetch('./version.json', { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          var version = d.version || (d.android && d.android.versionName);
+          var notes = (d.android && d.android.notes) || d.notes;
+          if (version) {
+            document.getElementById('versionBadge').textContent = 'v' + version;
+            document.getElementById('updateVersionPill').textContent = 'v' + version;
+          }
+          if (notes) document.getElementById('updateNotes').textContent = notes;
+        })
+        .catch(function () {});
+    })();
   </script>
 </body>
 </html>

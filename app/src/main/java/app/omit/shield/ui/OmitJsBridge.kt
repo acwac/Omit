@@ -8,20 +8,20 @@ import android.provider.Settings
 import android.webkit.JavascriptInterface
 import app.omit.shield.data.FilterMetadata
 import app.omit.shield.data.ShieldState
-import app.omit.shield.data.VellumPrefs
+import app.omit.shield.data.OmitPrefs
 import app.omit.shield.dns.BlockEngine
-import app.omit.shield.service.VellumVpnService
+import app.omit.shield.service.OmitVpnService
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-class VellumJsBridge(
+class OmitJsBridge(
     private val activity: MainActivity
 ) {
     private val appContext: Context = activity.applicationContext
     private val bgPool = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "vellum-ui-bg").apply { isDaemon = true }
+        Thread(r, "omit-ui-bg").apply { isDaemon = true }
     }
 
     private data class CachedAppEntry(
@@ -110,7 +110,7 @@ class VellumJsBridge(
     private fun serializeApps(entries: List<CachedAppEntry>): JSONArray {
         val arr = JSONArray()
         for (item in entries) {
-            val modeCode = VellumPrefs.getAppMode(item.pkg)
+            val modeCode = OmitPrefs.getAppMode(item.pkg)
             val modeStr = when (modeCode) {
                 1 -> "Bypassed"
                 2 -> "Offline Lock"
@@ -131,7 +131,7 @@ class VellumJsBridge(
 
     @JavascriptInterface
     fun setDarkMode(dark: Boolean) {
-        VellumPrefs.setDarkModePref(dark)
+        OmitPrefs.setDarkModePref(dark)
         activity.runOnUiThread {
             activity.applySystemBarAppearance(dark)
             activity.pushCurrentState()
@@ -148,9 +148,9 @@ class VellumJsBridge(
     @JavascriptInterface
     fun pause60s() {
         activity.runOnUiThread {
-            if (VellumPrefs.shieldState != ShieldState.OFF) {
-                val svc = Intent(appContext, VellumVpnService::class.java).apply {
-                    action = VellumVpnService.ACTION_PAUSE_60S
+            if (OmitPrefs.shieldState != ShieldState.OFF) {
+                val svc = Intent(appContext, OmitVpnService::class.java).apply {
+                    action = OmitVpnService.ACTION_PAUSE_60S
                 }
                 appContext.startService(svc)
             }
@@ -160,9 +160,9 @@ class VellumJsBridge(
     @JavascriptInterface
     fun resumeShield() {
         activity.runOnUiThread {
-            if (VellumPrefs.shieldState != ShieldState.OFF) {
-                val svc = Intent(appContext, VellumVpnService::class.java).apply {
-                    action = VellumVpnService.ACTION_RESUME
+            if (OmitPrefs.shieldState != ShieldState.OFF) {
+                val svc = Intent(appContext, OmitVpnService::class.java).apply {
+                    action = OmitVpnService.ACTION_RESUME
                 }
                 appContext.startService(svc)
             } else {
@@ -173,12 +173,12 @@ class VellumJsBridge(
 
     @JavascriptInterface
     fun setOfflineGameMode(enabled: Boolean): Boolean {
-        if (enabled && VellumPrefs.offlineGamePackages.isEmpty()) {
+        if (enabled && OmitPrefs.offlineGamePackages.isEmpty()) {
             return false
         }
-        VellumPrefs.setOfflineGameMode(enabled)
+        OmitPrefs.setOfflineGameMode(enabled)
         activity.runOnUiThread {
-            if (VellumPrefs.shieldState != ShieldState.OFF) {
+            if (OmitPrefs.shieldState != ShieldState.OFF) {
                 reloadVpnIfRunning()
             } else if (enabled) {
                 activity.requestStartVpn()
@@ -195,14 +195,14 @@ class VellumJsBridge(
             2 -> FilterMetadata.MASK_STRICT
             else -> return
         }
-        VellumPrefs.setCategoryMask(nextMask)
+        OmitPrefs.setCategoryMask(nextMask)
         reloadVpnIfRunning()
     }
 
     @JavascriptInterface
     fun toggleCategory(index: Int) {
         if (index !in FilterMetadata.CATEGORY_BITS.indices) return
-        VellumPrefs.toggleCategoryBit(FilterMetadata.CATEGORY_BITS[index])
+        OmitPrefs.toggleCategoryBit(FilterMetadata.CATEGORY_BITS[index])
         reloadVpnIfRunning()
     }
 
@@ -210,52 +210,52 @@ class VellumJsBridge(
     fun toggleEngine(index: Int) {
         if (index !in FilterMetadata.ENGINE_KEYS.indices) return
         val key = FilterMetadata.ENGINE_KEYS[index]
-        val cur = VellumPrefs.getEngineToggle(key)
-        VellumPrefs.setEngineToggle(key, !cur)
+        val cur = OmitPrefs.getEngineToggle(key)
+        OmitPrefs.setEngineToggle(key, !cur)
         reloadVpnIfRunning()
     }
 
     @JavascriptInterface
     fun setUpstreamDns(index: Int, customUrl: String) {
         val spec = FilterMetadata.upstreamByIndex(index)
-        VellumPrefs.setUpstream(spec.id, customUrl.takeIf { it.isNotBlank() })
+        OmitPrefs.setUpstream(spec.id, customUrl.takeIf { it.isNotBlank() })
         reloadVpnIfRunning()
     }
 
     @JavascriptInterface
     fun addAllowDomain(domain: String): Boolean {
-        val clean = VellumPrefs.normalizeDomain(domain)
+        val clean = OmitPrefs.normalizeDomain(domain)
         if (clean.length < 3 || !clean.contains('.')) return false
-        VellumPrefs.addAllowDomain(clean)
+        OmitPrefs.addAllowDomain(clean)
         reloadVpnIfRunning()
         return true
     }
 
     @JavascriptInterface
     fun removeAllowDomain(domain: String) {
-        VellumPrefs.removeAllowDomain(domain)
+        OmitPrefs.removeAllowDomain(domain)
         reloadVpnIfRunning()
     }
 
     @JavascriptInterface
     fun addBlockDomain(domain: String): Boolean {
-        val clean = VellumPrefs.normalizeDomain(domain)
+        val clean = OmitPrefs.normalizeDomain(domain)
         if (clean.length < 3 || !clean.contains('.')) return false
-        VellumPrefs.addBlockDomain(clean)
+        OmitPrefs.addBlockDomain(clean)
         reloadVpnIfRunning()
         return true
     }
 
     @JavascriptInterface
     fun removeBlockDomain(domain: String) {
-        VellumPrefs.removeBlockDomain(domain)
+        OmitPrefs.removeBlockDomain(domain)
         reloadVpnIfRunning()
     }
 
     @JavascriptInterface
     fun removeCustomRuleForDomain(domain: String) {
-        VellumPrefs.removeAllowDomain(domain)
-        VellumPrefs.removeBlockDomain(domain)
+        OmitPrefs.removeAllowDomain(domain)
+        OmitPrefs.removeBlockDomain(domain)
         reloadVpnIfRunning()
     }
 
@@ -263,22 +263,22 @@ class VellumJsBridge(
     fun addCustomListUrl(url: String): Boolean {
         val trimmed = url.trim()
         if (!trimmed.startsWith("https://") && !trimmed.startsWith("http://")) return false
-        VellumPrefs.addCustomListUrl(trimmed)
+        OmitPrefs.addCustomListUrl(trimmed)
         return true
     }
 
     @JavascriptInterface
     fun removeCustomListUrl(url: String) {
-        VellumPrefs.removeCustomListUrl(url)
+        OmitPrefs.removeCustomListUrl(url)
     }
 
     @JavascriptInterface
     fun syncLists() {
-        if (VellumPrefs.isSyncingLists) return
-        VellumPrefs.setSyncing(true)
+        if (OmitPrefs.isSyncingLists) return
+        OmitPrefs.setSyncing(true)
         bgPool.execute {
             val res = BlockEngine.syncOnlineLists(appContext)
-            VellumPrefs.setSyncing(false)
+            OmitPrefs.setSyncing(false)
             res.onSuccess { total ->
                 reloadVpnIfRunning()
                 activity.pushToast("Synced ${String.format("%,d", total)} rules")
@@ -296,7 +296,7 @@ class VellumJsBridge(
             "Offline Lock" -> 2
             else -> 0
         }
-        VellumPrefs.setAppMode(pkg, modeInt)
+        OmitPrefs.setAppMode(pkg, modeInt)
         cachedApps?.let {
             activity.pushAppsJson(serializeApps(it).toString())
         }
@@ -305,12 +305,12 @@ class VellumJsBridge(
 
     @JavascriptInterface
     fun setLogging(enabled: Boolean) {
-        VellumPrefs.setLiveLogEnabled(enabled)
+        OmitPrefs.setLiveLogEnabled(enabled)
     }
 
     @JavascriptInterface
     fun clearLogs() {
-        VellumPrefs.clearLogs()
+        OmitPrefs.clearLogs()
     }
 
     @JavascriptInterface
@@ -321,18 +321,18 @@ class VellumJsBridge(
 
     @JavascriptInterface
     fun setIspUnblockEnabled(enabled: Boolean) {
-        VellumPrefs.ispUnblockEnabled = enabled
+        OmitPrefs.setIspUnblockEnabled(enabled)
     }
 
     @JavascriptInterface
     fun setSmartContextMode(enabled: Boolean) {
-        VellumPrefs.smartContextMode = enabled
+        OmitPrefs.setSmartContextMode(enabled)
     }
 
     @JavascriptInterface
     fun getSpyStatsJson(): String {
         val arr = org.json.JSONArray()
-        for (s in VellumPrefs.getSpyStatsSnapshot().take(20)) {
+        for (s in OmitPrefs.getSpyStatsSnapshot().take(20)) {
             val o = org.json.JSONObject()
             o.put("packageName", s.packageName)
             o.put("appName", s.appName)
@@ -418,24 +418,31 @@ class VellumJsBridge(
         return app.omit.shield.net.BurnerManager.fetchSmsMessages(digits).toString()
     }
 
+    /** Returns true only when the proxy actually bound a port. */
     @JavascriptInterface
-    fun setHomeShieldEnabled(enabled: Boolean) {
-        VellumPrefs.homeShieldEnabled = enabled
+    fun setHomeShieldEnabled(enabled: Boolean): Boolean {
         if (enabled) {
-            app.omit.shield.net.HomeShieldServer.start(null)
-            reloadVpnIfRunning()
-        } else {
-            app.omit.shield.net.HomeShieldServer.stop()
+            // Omit excludes itself from its own TUN, so the LAN proxy's sockets never loop
+            // back into the VPN and need no protect() call.
+            val bound = app.omit.shield.net.HomeShieldServer.start()
+            OmitPrefs.setHomeShieldEnabled(bound)
+            return bound
         }
+        app.omit.shield.net.HomeShieldServer.stop()
+        OmitPrefs.setHomeShieldEnabled(false)
+        return true
     }
 
     @JavascriptInterface
     fun getHomeShieldInfoJson(): String {
         val o = org.json.JSONObject()
-        o.put("enabled", VellumPrefs.homeShieldEnabled)
-        o.put("lanIp", app.omit.shield.net.HomeShieldServer.getLanIp())
-        o.put("port", app.omit.shield.net.HomeShieldServer.activePort)
-        o.put("blockedCount", app.omit.shield.net.HomeShieldServer.blockedCount.get())
+        val server = app.omit.shield.net.HomeShieldServer
+        val running = server.isRunning
+        // Never advertise a port unless the socket is actually listening.
+        o.put("enabled", running)
+        o.put("lanIp", if (running) server.getLanIp() else "")
+        o.put("port", if (running) server.activePort else 0)
+        o.put("blockedCount", server.blockedCount.get())
         return o.toString()
     }
 
@@ -446,41 +453,74 @@ class VellumJsBridge(
 
     @JavascriptInterface
     fun applyOtaPatch(otaUrl: String, expectedSha256: String, patchCode: Int) {
+        if (!otaUrl.startsWith("https://")) {
+            activity.pushToast("OTA update blocked: insecure URL")
+            return
+        }
+        val nativeCode = installedVersionCode()
+        if (patchCode < nativeCode) {
+            activity.pushToast("This patch is older than the installed app")
+            return
+        }
         Thread {
             try {
-                activity.pushToast("Downloading ~90 KB UI patch...")
+                activity.pushToast("Downloading UI patch...")
                 val conn = (java.net.URL(otaUrl).openConnection() as java.net.HttpURLConnection).apply {
-                    connectTimeout = 8000
-                    readTimeout = 15000
+                    connectTimeout = 10000
+                    readTimeout = 20000
+                    instanceFollowRedirects = true
                 }
-                val zipBytes = conn.inputStream.readBytes()
+                val zipBytes = conn.inputStream.use { it.readBytes() }
+                if (zipBytes.isEmpty()) {
+                    activity.pushToast("OTA download was empty")
+                    return@Thread
+                }
                 if (expectedSha256.isNotBlank()) {
                     val digest = java.security.MessageDigest.getInstance("SHA-256").digest(zipBytes)
                     val hex = digest.joinToString("") { "%02x".format(it) }
                     if (!hex.equals(expectedSha256, ignoreCase = true)) {
-                        activity.pushToast("OTA checksum mismatch")
+                        activity.pushToast("OTA checksum mismatch — update cancelled")
                         return@Thread
                     }
                 }
-                val otaDir = java.io.File(activity.filesDir, "ota-ui").apply {
-                    deleteRecursively()
-                    mkdirs()
-                }
+                val root = java.io.File(activity.filesDir, "ota-ui")
+                val staging = java.io.File(activity.filesDir, "ota-ui-staging")
+                staging.deleteRecursively()
+                staging.mkdirs()
+                val rootPath = staging.canonicalPath + java.io.File.separator
+                var extracted = 0
                 java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zipBytes)).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
-                        val outFile = java.io.File(otaDir, entry.name)
+                        val outFile = java.io.File(staging, entry.name)
+                        // Reject zip-slip paths that escape the staging directory.
+                        if (!outFile.canonicalPath.startsWith(rootPath)) {
+                            activity.pushToast("OTA patch contained unsafe paths")
+                            staging.deleteRecursively()
+                            return@Thread
+                        }
                         if (entry.isDirectory) {
                             outFile.mkdirs()
                         } else {
                             outFile.parentFile?.mkdirs()
                             java.io.FileOutputStream(outFile).use { fos -> zis.copyTo(fos) }
+                            extracted++
                         }
                         zis.closeEntry()
                         entry = zis.nextEntry
                     }
                 }
-                activity.getSharedPreferences("omit_ota_prefs", android.content.Context.MODE_PRIVATE)
+                if (extracted == 0 || !java.io.File(staging, "index.html").isFile) {
+                    staging.deleteRecursively()
+                    activity.pushToast("OTA patch missing index.html")
+                    return@Thread
+                }
+                root.deleteRecursively()
+                if (!staging.renameTo(root)) {
+                    staging.copyRecursively(root, overwrite = true)
+                    staging.deleteRecursively()
+                }
+                activity.getSharedPreferences("omit_ota_prefs", Context.MODE_PRIVATE)
                     .edit().putInt("patch_code", patchCode).apply()
                 activity.runOnUiThread {
                     activity.pushToast("Updated! Reloading...")
@@ -492,18 +532,104 @@ class VellumJsBridge(
         }.start()
     }
 
+    private fun installedVersionCode(): Int {
+        return try {
+            val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                info.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode
+            }
+        } catch (_: Throwable) {
+            0
+        }
+    }
+
+    @JavascriptInterface
+    fun getVersionCode(): Int = installedVersionCode()
+
+    @JavascriptInterface
+    fun getVersionName(): String {
+        return try {
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: ""
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
     @JavascriptInterface
     fun checkUpdateJson(): String {
-        return try {
-            val url = java.net.URL("https://acwac.github.io/Omit/version.json")
-            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                connectTimeout = 5000
-                readTimeout = 5000
+        return fetchUpdateJson()?.toString() ?: "{}"
+    }
+
+    @JavascriptInterface
+    fun checkUpdateAsync(currentVersionCode: Int) {
+        bgPool.execute {
+            val payload = fetchUpdateJson()
+            val info = try {
+                payload?.let { parseUpdateInfo(it, currentVersionCode) }
+            } catch (_: Throwable) {
+                null
             }
-            conn.inputStream.bufferedReader().use { it.readText() }
-        } catch (_: Throwable) {
-            "{}"
+            val literal = if (info != null) JSONObject.quote(info.toString()) else "null"
+            activity.runOnUiThread {
+                activity.evalJs(
+                    "window.__omitOnUpdate && window.__omitOnUpdate($literal)"
+                )
+            }
         }
+    }
+
+    @JavascriptInterface
+    fun dismissUpdate(versionCode: Int) {
+        activity.getSharedPreferences("omit_ota_prefs", Context.MODE_PRIVATE)
+            .edit().putInt("dismissed_update", versionCode).apply()
+    }
+
+    private fun fetchUpdateJson(): JSONObject? {
+        return try {
+            val url = java.net.URL(VERSION_JSON_URL)
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 7000
+                readTimeout = 7000
+                instanceFollowRedirects = true
+                setRequestProperty("Cache-Control", "no-cache")
+            }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            JSONObject(text)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Accepts both the flat v2 JSON (version/versionCode/...) and the nested
+     * {"android": {...}} form, so either server schema keeps working.
+     */
+    private fun parseUpdateInfo(raw: JSONObject, currentVersionCode: Int): JSONObject? {
+        val android = raw.optJSONObject("android") ?: raw
+        val versionCode = android.optInt("versionCode", raw.optInt("versionCode", 0))
+        val versionName = android.optString("versionName", raw.optString("version", ""))
+        if (versionCode <= currentVersionCode || versionName.isBlank()) return null
+        val dismissed = activity.getSharedPreferences("omit_ota_prefs", Context.MODE_PRIVATE)
+            .getInt("dismissed_update", 0)
+        if (dismissed >= versionCode) return null
+        val minNative = raw.optInt("minNativeCode", 0)
+        val otaUrl = android.optString("otaUrl", raw.optString("otaUrl", ""))
+        // A UI-only patch is only offered when it targets this exact native version.
+        val otaCompatible = otaUrl.isNotBlank() &&
+            minNative <= installedVersionCode() &&
+            versionCode >= installedVersionCode()
+        return JSONObject()
+            .put("version", versionName)
+            .put("versionCode", versionCode)
+            .put("notes", android.optString("notes", raw.optString("notes", "")))
+            .put("apkUrl", android.optString("apkUrl", raw.optString("androidApkUrl", "")))
+            .put("otaUrl", if (otaCompatible) otaUrl else "")
+            .put("otaSha256", raw.optString("otaSha256", ""))
+            .put("otaCode", raw.optInt("otaCode", versionCode))
     }
 
     @JavascriptInterface
@@ -563,9 +689,9 @@ class VellumJsBridge(
     }
 
     private fun reloadVpnIfRunning() {
-        if (VellumPrefs.shieldState != ShieldState.OFF) {
-            val svc = Intent(appContext, VellumVpnService::class.java).apply {
-                action = VellumVpnService.ACTION_RELOAD
+        if (OmitPrefs.shieldState != ShieldState.OFF) {
+            val svc = Intent(appContext, OmitVpnService::class.java).apply {
+                action = OmitVpnService.ACTION_RELOAD
             }
             appContext.startService(svc)
         }
@@ -576,13 +702,15 @@ class VellumJsBridge(
     }
 
     companion object {
+        private const val VERSION_JSON_URL = "https://acwac.github.io/Omit/version.json"
+
         fun buildStateJson(): JSONObject {
             val nowMs = System.currentTimeMillis()
             val obj = JSONObject()
 
-            obj.put("dark", VellumPrefs.darkMode)
+            obj.put("dark", OmitPrefs.darkMode)
 
-            val shieldStr = when (VellumPrefs.shieldState) {
+            val shieldStr = when (OmitPrefs.shieldState) {
                 ShieldState.OFF -> "off"
                 ShieldState.PAUSED -> "paused"
                 ShieldState.OFFLINE_SANDBOX -> "game"
@@ -590,14 +718,14 @@ class VellumJsBridge(
             }
             obj.put("shield", shieldStr)
 
-            val countdownVal: Int = if (VellumPrefs.shieldState == ShieldState.PAUSED) {
-                VellumPrefs.pauseRemainingSec.coerceAtLeast(1)
+            val countdownVal: Int = if (OmitPrefs.shieldState == ShieldState.PAUSED) {
+                OmitPrefs.pauseRemainingSec.coerceAtLeast(1)
             } else {
                 60
             }
             obj.put("countdown", countdownVal)
 
-            val mask = VellumPrefs.activeCategoryMask.get()
+            val mask = OmitPrefs.activeCategoryMask.get()
             obj.put("intensity", FilterMetadata.intensityTitleForMask(mask))
 
             val catsArr = JSONArray()
@@ -608,44 +736,44 @@ class VellumJsBridge(
 
             val engArr = JSONArray()
             for (key in FilterMetadata.ENGINE_KEYS) {
-                engArr.put(VellumPrefs.getEngineToggle(key))
+                engArr.put(OmitPrefs.getEngineToggle(key))
             }
             obj.put("engine", engArr)
 
-            obj.put("dns", FilterMetadata.upstreamById(VellumPrefs.upstreamId).index)
-            obj.put("customDohUrl", VellumPrefs.customDohUrl)
-            obj.put("gameMode", VellumPrefs.offlineGameMode)
-            obj.put("offlineGameCount", VellumPrefs.offlineGamePackages.size)
-            obj.put("blockedCount", VellumPrefs.blockedQueries.get())
-            obj.put("totalQueries", VellumPrefs.totalQueries.get())
+            obj.put("dns", FilterMetadata.upstreamById(OmitPrefs.upstreamId).index)
+            obj.put("customDohUrl", OmitPrefs.customDohUrl)
+            obj.put("gameMode", OmitPrefs.offlineGameMode)
+            obj.put("offlineGameCount", OmitPrefs.offlineGamePackages.size)
+            obj.put("blockedCount", OmitPrefs.blockedQueries.get())
+            obj.put("totalQueries", OmitPrefs.totalQueries.get())
 
             val ruleCount: Int = BlockEngine.getRuleCount().let {
-                if (it > 0) it else VellumPrefs.compiledRuleCount
+                if (it > 0) it else OmitPrefs.compiledRuleCount
             }
             obj.put("activeRules", ruleCount)
-            obj.put("privateDnsHost", VellumPrefs.privateDnsHostWarning ?: "")
+            obj.put("privateDnsHost", OmitPrefs.privateDnsHostWarning ?: "")
 
             val allowArr = JSONArray()
-            for (d in VellumPrefs.customAllowDomains.sorted()) allowArr.put(d)
+            for (d in OmitPrefs.customAllowDomains.sorted()) allowArr.put(d)
             obj.put("allowDomains", allowArr)
 
             val blockArr = JSONArray()
-            for (d in VellumPrefs.customBlockDomains.sorted()) blockArr.put(d)
+            for (d in OmitPrefs.customBlockDomains.sorted()) blockArr.put(d)
             obj.put("blockDomains", blockArr)
 
             val urlsArr = JSONArray()
-            for (u in VellumPrefs.customListUrls) urlsArr.put(u)
+            for (u in OmitPrefs.customListUrls) urlsArr.put(u)
             obj.put("customUrls", urlsArr)
 
-            obj.put("logging", VellumPrefs.liveLogEnabled)
-            obj.put("syncing", VellumPrefs.isSyncingLists)
+            obj.put("logging", OmitPrefs.liveLogEnabled)
+            obj.put("syncing", OmitPrefs.isSyncingLists)
 
-            val logsSnapshot = VellumPrefs.getLogsSnapshot()
+            val logsSnapshot = OmitPrefs.getLogsSnapshot()
             val logsArr = JSONArray()
             val recentBlockedArr = JSONArray()
             val seenRecent = HashSet<String>(4)
-            val allowSet = VellumPrefs.customAllowDomains
-            val blockSet = VellumPrefs.customBlockDomains
+            val allowSet = OmitPrefs.customAllowDomains
+            val blockSet = OmitPrefs.customBlockDomains
 
             for (entry in logsSnapshot) {
                 val relTime = formatRelativeTime(nowMs, entry.timestampMs)

@@ -30,6 +30,8 @@ object IpUdpPacket {
             val srcPort = readU16(packet, ihl)
             val udpLen = readU16(packet, ihl + 4)
             if (udpLen < 8) return null
+            // Guard against truncated/malformed frames before slicing the payload.
+            if (ihl + 8 > length || length < ihl + udpLen) return null
 
             val dnsOffset = ihl + 8
             val dnsLen = minOf(length - dnsOffset, udpLen - 8)
@@ -48,6 +50,7 @@ object IpUdpPacket {
             val srcPort = readU16(packet, 40)
             val udpLen = readU16(packet, 44)
             if (udpLen < 8) return null
+            if (length < 48 + udpLen) return null
 
             val dnsOffset = 48
             val dnsLen = minOf(length - dnsOffset, udpLen - 8)

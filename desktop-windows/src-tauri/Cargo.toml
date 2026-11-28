@@ -1,16 +1,25 @@
 [package]
 name = "omit-windows"
-version = "2.1.0"
+version = "2.5.0"
 description = "Omit — Featherlight System-Wide Ad, Tracker & Anti-DPI Shield for Windows 10/11"
 authors = ["Omit"]
 edition = "2021"
+rust-version = "1.77"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 tauri = { version = "2.0", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["blocking"] }
+tokio = { version = "1", features = ["time"] }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

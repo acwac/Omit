@@ -1,29 +1,49 @@
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-
-if (typeof window !== "undefined" && window.VellumAndroid && !window.OmitAndroid) {
-  window.OmitAndroid = window.VellumAndroid;
-}
 import {
+  androidBridge,
+  applyOtaUpdate,
+  checkForUpdate,
+  copyToClipboard,
+  dismissUpdate,
+  downloadAndInstallUpdate,
   formatCompactCount,
   isAndroidRuntime,
-  readInitialApps,
-  readInitialState,
-  type AppMode,
-  type DnsLogItem,
-  type InstalledAppItem,
-  type RecentBlockedItem,
-  type ShieldState,
-  type OmitStateSnapshot,
+  isNativeRuntime,
+  isUpdateDismissed,
+  isWindowsRuntime,
   nativeGetBurnerEmail,
   nativeGetBurnerInbox,
-  nativeGetBurnerSmsNumbers,
   nativeGetBurnerSmsMessages,
-  nativeSetHomeShield,
+  nativeGetBurnerSmsNumbers,
   nativeGetHomeShieldInfo,
+  nativeGetTamperWarning,
+  nativeSetHomeShield,
+  nativeVersionCode,
+  openExternalUrl,
+  readInitialApps,
+  readInitialState,
+  readSpyStats,
+  setDarkMode,
+  clearWindowsLogs,
+  getWindowsLogs,
+  getWindowsRules,
+  setWindowsCategoryMask,
+  setWindowsRule,
+  setWindowsShield,
+  windowsShieldStatus,
+  windowsStats,
+  type AppMode,
   type BurnerEmailMsg,
-  type BurnerSmsNum,
   type BurnerSmsMsg,
+  type BurnerSmsNum,
+  type DnsLogItem,
   type HomeShieldInfo,
+  type InstalledAppItem,
+  type OmitStateSnapshot,
+  type RecentBlockedItem,
+  type ShieldState,
+  type SpyStatItem,
+  type UpdateInfo,
 } from "./bridge";
 
 type Tab = "home" | "burner" | "blocking" | "apps" | "activity";
@@ -48,9 +68,7 @@ const iconPaths: Record<string, ReactNode> = {
   ),
   pause: <path d="M8 5v14m8-14v14" />,
   play: <path d="m8 5 11 7-11 7V5Z" />,
-  game: (
-    <path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v9H5v-9Z" />
-  ),
+  game: <path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v9H5v-9Z" />,
   warning: (
     <>
       <path d="m12 3 9 17H3L12 3Z" />
@@ -59,6 +77,7 @@ const iconPaths: Record<string, ReactNode> = {
   ),
   arrow: <path d="m9 6 6 6-6 6" />,
   down: <path d="m6 9 6 6 6-6" />,
+  up: <path d="m6 15 6-6 6 6" />,
   check: <path d="m5 12 4 4L19 6" />,
   search: (
     <>
@@ -81,8 +100,12 @@ const iconPaths: Record<string, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   trash: <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6" />,
-  wifi: (
-    <path d="M3.5 9a13 13 0 0 1 17 0M6.5 12.5a8.5 8.5 0 0 1 11 0M9.5 16a4 4 0 0 1 5 0M12 19h.01" />
+  wifi: <path d="M3.5 9a13 13 0 0 1 17 0M6.5 12.5a8.5 8.5 0 0 1 11 0M9.5 16a4 4 0 0 1 5 0M12 19h.01" />,
+  download: (
+    <>
+      <path d="M12 4v10m0 0 4-4m-4 4-4-4" />
+      <path d="M5 18h14" />
+    </>
   ),
 };
 
@@ -107,8 +130,12 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
   return (
     <button
+      type="button"
       className={`toggle ${on ? "on" : ""}`}
-      onClick={onChange}
+      onClick={(event) => {
+        event.stopPropagation();
+        onChange();
+      }}
       role="switch"
       aria-checked={on}
       aria-label={label}
@@ -171,12 +198,12 @@ function ExpandRow({
   return (
     <div className={`expand-row ${open ? "open" : ""}`}>
       <div className="row-main">
-        <button className="row-copy" onClick={() => setOpen(!open)}>
+        <button className="row-copy" onClick={() => setOpen(!open)} aria-expanded={open}>
           <span>
             <b>{title}</b>
             {note && <small>{note}</small>}
           </span>
-          <Icon name="down" size={17} />
+          <Icon name={open ? "up" : "down"} size={17} />
         </button>
         <Toggle on={on} onChange={onChange} label={title} />
       </div>
@@ -186,9 +213,22 @@ function ExpandRow({
 }
 
 function Modal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <div className="modal-wrap" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <button className="icon-btn modal-close" onClick={onClose} aria-label="Close">
           <Icon name="close" />
         </button>
@@ -205,7 +245,7 @@ function AppBadge({ app }: { app: InstalledAppItem }) {
     <span className="app-icon" style={{ background: showNativeIcon ? "transparent" : app.color }}>
       {showNativeIcon ? (
         <img
-          src={`https://app.vellum.local/app-icon/${encodeURIComponent(app.pkg)}`}
+          src={`https://app.omit.local/app-icon/${encodeURIComponent(app.pkg)}`}
           alt=""
           loading="lazy"
           onError={() => setImgFailed(true)}
@@ -219,157 +259,85 @@ function AppBadge({ app }: { app: InstalledAppItem }) {
 
 const intensityData = [
   ["Light", "Game ads & scams only", "Zero broken sites.", "Web trackers still pass."],
-  [
-    "Balanced",
-    "Everyday protection",
-    "Blocks 95% of annoyances.",
-    "Reward ads need Pause; shopping links work.",
-  ],
-  [
-    "Strict",
-    "Block everything",
-    "Maximum privacy.",
-    "May break shopping, cashback, and social login links.",
-  ],
-  [
-    "Custom",
-    "Choose categories",
-    "Protection shaped by you.",
-    "Results depend on the switches below.",
-  ],
+  ["Balanced", "Everyday protection", "Blocks 95% of annoyances.", "Reward ads need Pause; shopping links work."],
+  ["Strict", "Block everything", "Maximum privacy.", "May break shopping, cashback, and social login links."],
+  ["Custom", "Choose categories", "Protection shaped by you.", "Results depend on the switches below."],
 ] as const;
 
 const categoryData = [
-  [
-    "Game & In-App Ads",
-    true,
-    "Removes banners, popups, and video ad preloads.",
-    "Rewarded ads will need Pause 60s.",
-  ],
-  [
-    "Web Banners & Popups",
-    true,
-    "Stops banners, fake buttons, and redirects.",
-    "Some ad-wall sites may show blank spaces.",
-  ],
-  [
-    "Cross-App Trackers",
-    true,
-    "Stops analytics SDKs profiling app use.",
-    "Some tracked email and referral links may fail.",
-  ],
-  [
-    "Malware & Scam Shield",
-    true,
-    "Blocks known phishing, scam, and malware hosts.",
-    "Rare new file mirrors may be blocked.",
-  ],
-  [
-    "Phone Brand Telemetry",
-    true,
-    "Silences phone maker analytics and ad-ID pings.",
-    "Built-in diagnostics may not sync.",
-  ],
-  [
-    "Betting & Casino Popups",
-    true,
-    "Stops aggressive betting and casino networks.",
-    "Betting and fantasy sports sites are blocked.",
-  ],
-  [
-    "Shopping & Affiliate Links",
-    false,
-    "Stops affiliate purchase tracking.",
-    "Sponsored results and cashback links can break.",
-  ],
-  [
-    "Social Media Trackers",
-    false,
-    "Stops social pixels on websites you visit.",
-    "Social login and embedded posts may fail.",
-  ],
+  ["Game & In-App Ads", "Removes banners, popups, and video ad preloads.", "Rewarded ads will need Pause 60s."],
+  ["Web Banners & Popups", "Stops banners, fake buttons, and redirects.", "Some ad-wall sites may show blank spaces."],
+  ["Cross-App Trackers", "Stops analytics SDKs profiling app use.", "Some tracked email and referral links may fail."],
+  ["Malware & Scam Shield", "Blocks known phishing, scam, and malware hosts.", "Rare new file mirrors may be blocked."],
+  ["Phone Brand Telemetry", "Silences phone maker analytics and ad-ID pings.", "Built-in diagnostics may not sync."],
+  ["Betting & Casino Popups", "Stops aggressive betting and casino networks.", "Betting and fantasy sports sites are blocked."],
+  ["Shopping & Affiliate Links", "Stops affiliate purchase tracking.", "Sponsored results and cashback links can break."],
+  ["Social Media Trackers", "Stops social pixels on websites you visit.", "Social login and embedded posts may fail."],
 ] as const;
 
+/** Windows has no phone-brand telemetry; relabel the same bit for desktop. */
+const WINDOWS_CATEGORY_LABELS: Record<string, [string, string, string]> = {
+  "Phone Brand Telemetry": [
+    "Windows Telemetry",
+    "Silences Microsoft diagnostic and ad-ID pings.",
+    "Windows tips and diagnostics may not sync.",
+  ],
+  "Game & In-App Ads": [
+    "Game & Store Ads",
+    "Stops game storefront and overlay ad networks.",
+    "Rewarded ads need Pause 60s.",
+  ],
+};
+
 const engineData = [
-  [
-    "CNAME Uncloaking",
-    true,
-    "Finds trackers hidden behind first-party domains.",
-    "Rare CDN aliases may need an allow rule.",
-  ],
-  [
-    "Anti-Retry-Storm Cache",
-    true,
-    "Stops blocked apps repeatedly waking your radio.",
-    "Blocks remain cached for five minutes.",
-  ],
-  [
-    "Prevent Browser DNS Bypass",
-    true,
-    "Keeps browser requests inside Omit.",
-    "Secure DNS may need disabling in some browsers.",
-  ],
-  [
-    "Hotel/Cafe Wi-Fi Helper",
-    true,
-    "Helps captive portal login pages open.",
-    "The portal lookup may briefly be unencrypted.",
-  ],
-  [
-    "Start on Boot",
-    true,
-    "Restores protection automatically after restart.",
-    "Omit starts without manual confirmation.",
-  ],
+  ["CNAME Uncloaking", "Finds trackers hidden behind first-party domains.", "Rare CDN aliases may need an allow rule."],
+  ["Anti-Retry-Storm Cache", "Stops blocked apps repeatedly waking your radio.", "Blocks remain cached for five minutes."],
+  ["Prevent Browser DNS Bypass", "Keeps browser requests inside Omit.", "Secure DNS may need disabling in some browsers."],
+  ["Captive Portal Helper", "Helps hotel and cafe Wi-Fi login pages open.", "The portal lookup may briefly be unencrypted."],
+  ["Start on Boot", "Restores protection automatically after restart.", "Omit starts without manual confirmation."],
+] as const;
+
+/** On Windows the phone-specific engine rows are replaced, not just hidden. */
+const windowsEngineData = [
+  ["CNAME Uncloaking", "Finds trackers hidden behind first-party domains.", "Rare CDN aliases may need an allow rule."],
+  ["TTL Retry Guard", "Caches blocked answers so apps stop re-querying.", "Blocks stay cached for five minutes."],
+  ["Windows DNS Lock", "Keeps the adapter pinned to Omit while the shield is on.", "Other DNS tools may conflict."],
+  ["Captive Portal Helper", "Lets hotel and airport Wi-Fi login pages open.", "The portal lookup may briefly be unencrypted."],
+  ["Start with Windows", "Restores protection automatically after restart.", "Omit starts without manual confirmation."],
 ] as const;
 
 const dnsData = [
-  [
-    "Google DNS",
-    "Reliable default",
-    "Unlocks ISP-blocked sites with reliable encrypted DNS coverage.",
-    "Uses Google Public DNS policy.",
-  ],
-  [
-    "Cloudflare",
-    "Fastest nearby",
-    "Low latency and privacy-oriented policy.",
-    "May route some CDN content differently.",
-  ],
-  [
-    "Quad9",
-    "Malware-aware",
-    "Adds an independent malware protection layer.",
-    "Can be slightly slower in some locations.",
-  ],
-  [
-    "AdGuard Unfiltered",
-    "Independent",
-    "Leaves all filtering decisions to Omit.",
-    "May have higher latency in some regions.",
-  ],
-  [
-    "Custom DoH URL",
-    "Advanced",
-    "Use your own trusted encrypted resolver.",
-    "An invalid server can stop sites loading.",
-  ],
+  ["Google DNS", "Reliable default", "Unlocks ISP-blocked sites with reliable encrypted DNS coverage.", "Uses Google Public DNS policy."],
+  ["Cloudflare", "Fastest nearby", "Low latency and privacy-oriented policy.", "May route some CDN content differently."],
+  ["Quad9", "Malware-aware", "Adds an independent malware protection layer.", "Can be slightly slower in some locations."],
+  ["AdGuard Unfiltered", "Independent", "Leaves all filtering decisions to Omit.", "May have higher latency in some regions."],
+  ["Custom DoH URL", "Advanced", "Use your own trusted encrypted resolver.", "An invalid server can stop sites loading."],
 ] as const;
 
 function computeIntensityName(cats: boolean[]): OmitStateSnapshot["intensity"] {
   const light = [true, false, false, true, false, false, false, false];
   const balanced = [true, true, true, true, true, true, false, false];
   const strict = [true, true, true, true, true, true, true, true];
-  if (cats.every((v, i) => v === light[i])) return "Light";
-  if (cats.every((v, i) => v === balanced[i])) return "Balanced";
-  if (cats.every((v, i) => v === strict[i])) return "Strict";
+  if (cats.length === 8 && cats.every((v, i) => v === light[i])) return "Light";
+  if (cats.length === 8 && cats.every((v, i) => v === balanced[i])) return "Balanced";
+  if (cats.length === 8 && cats.every((v, i) => v === strict[i])) return "Strict";
   return "Custom";
+}
+
+function normalizeDomain(raw: string): string {
+  let s = raw.trim().toLowerCase();
+  if (s.startsWith("https://")) s = s.slice(8);
+  if (s.startsWith("http://")) s = s.slice(7);
+  const slash = s.indexOf("/");
+  if (slash >= 0) s = s.slice(0, slash);
+  return s.replace(/^\.+|\.+$/g, "").trim();
 }
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [state, setState] = useState<OmitStateSnapshot>(() => readInitialState());
   const [apps, setApps] = useState<InstalledAppItem[]>(() => readInitialApps());
+  const [spyStats, setSpyStats] = useState<SpyStatItem[]>(() => readSpyStats());
 
   const [dnsOpen, setDnsOpen] = useState(false);
   const [customDnsOpen, setCustomDnsOpen] = useState(false);
@@ -382,46 +350,62 @@ export default function App() {
   const [urlInput, setUrlInput] = useState("");
 
   const [gameDetails, setGameDetails] = useState(false);
+  const [spyOpen, setSpyOpen] = useState(false);
   const [selectedAppPkg, setSelectedAppPkg] = useState<string | null>(null);
   const [appSearch, setAppSearch] = useState("");
   const [appFilter, setAppFilter] = useState("User Apps");
 
   const [frozen, setFrozen] = useState(false);
+  const frozenRef = useRef(false);
+  frozenRef.current = frozen;
   const [frozenLogs, setFrozenLogs] = useState<DnsLogItem[]>([]);
   const [logSearch, setLogSearch] = useState("");
   const [logFilter, setLogFilter] = useState("All");
   const [selectedLog, setSelectedLog] = useState<DnsLogItem | null>(null);
   const [toast, setToast] = useState("");
 
-  const categoriesRef = useRef<HTMLElement | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
 
-  // Sync theme attribute on <html>
+  const categoriesRef = useRef<HTMLDivElement | null>(null);
+
+  const windows = isWindowsRuntime();
+  const native = isNativeRuntime();
+
+  // Apply the stored theme immediately (useLayoutEffect order: first render commit).
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.theme = state.dark ? "dark" : "light";
+  }
+
+  // Apply the theme to <html> before the first paint, then keep it in sync.
   useEffect(() => {
     document.documentElement.dataset.theme = state.dark ? "dark" : "light";
   }, [state.dark]);
 
-  // Register live callbacks from Android native engine + Back button handler
+  // Register live callbacks from the native engine (new names, legacy aliases kept)
   useEffect(() => {
-    window.__vellumOnNativeState = (nextState: OmitStateSnapshot) => {
-      setState(nextState);
-    };
-    window.__vellumOnNativeApps = (nextApps: InstalledAppItem[]) => {
-      setApps(nextApps);
-    };
-    window.__vellumOnToast = (msg: string) => {
-      setToast(msg);
-    };
+    const onState = (nextState: OmitStateSnapshot) => setState(nextState);
+    const onApps = (nextApps: InstalledAppItem[]) => setApps(nextApps);
+    const onToast = (msg: string) => setToast(msg);
+    window.__omitOnNativeState = onState;
+    window.__omitOnNativeApps = onApps;
+    window.__omitOnToast = onToast;
     return () => {
-      delete window.__vellumOnNativeState;
-      delete window.__vellumOnNativeApps;
-      delete window.__vellumOnToast;
+      delete window.__omitOnNativeState;
+      delete window.__omitOnNativeApps;
+      delete window.__omitOnToast;
     };
   }, []);
 
+  // Back button / Escape navigation for phones, TVs and desktop windows
   useEffect(() => {
-    window.__vellumHandleBack = () => {
+    const goBack = () => {
       if (selectedLog) {
         setSelectedLog(null);
+        return true;
+      }
+      if (updateOpen) {
+        setUpdateOpen(false);
         return true;
       }
       if (selectedAppPkg !== null) {
@@ -444,20 +428,32 @@ export default function App() {
         setUrlsOpen(false);
         return true;
       }
+      if (spyOpen) {
+        setSpyOpen(false);
+        return true;
+      }
       if (tab !== "home") {
         setTab("home");
         return true;
       }
       return false;
     };
-    return () => {
-      delete window.__vellumHandleBack;
+    window.__omitHandleBack = goBack;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && goBack()) {
+        event.preventDefault();
+      }
     };
-  }, [selectedLog, selectedAppPkg, customDnsOpen, dnsOpen, rulesOpen, urlsOpen, tab]);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      delete window.__omitHandleBack;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [selectedLog, updateOpen, selectedAppPkg, customDnsOpen, dnsOpen, rulesOpen, urlsOpen, spyOpen, tab]);
 
-  // Standalone browser countdown fallback (on Android, native service drives countdown)
+  // Standalone countdown fallback (native shells drive their own countdown)
   useEffect(() => {
-    if (isAndroidRuntime() || state.shield !== "paused") return;
+    if (native || state.shield !== "paused") return;
     const timer = window.setInterval(() => {
       setState((cur) => {
         if (cur.countdown <= 1) {
@@ -467,7 +463,7 @@ export default function App() {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [state.shield]);
+  }, [native, state.shield]);
 
   useEffect(() => {
     if (!toast) return;
@@ -475,34 +471,144 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  // Load installed apps whenever user switches to Apps tab on Android
+  // Load installed apps whenever the user switches to the Apps tab on Android
   useEffect(() => {
-    if (tab === "apps" && window.OmitAndroid) {
-      try {
-        const fresh = JSON.parse(window.OmitAndroid.getInstalledAppsJson()) as InstalledAppItem[];
-        if (fresh.length > 0) setApps(fresh);
-      } catch {
-        // ignore
-      }
+    if (tab !== "apps") return;
+    const bridge = androidBridge();
+    if (!bridge) return;
+    try {
+      const fresh = JSON.parse(bridge.getInstalledAppsJson()) as InstalledAppItem[];
+      if (fresh.length > 0) setApps(fresh);
+    } catch {
+      /* ignore */
     }
   }, [tab]);
+
+  // Refresh spy-detector stats when the Apps / Home tabs come into view
+  useEffect(() => {
+    if (!isAndroidRuntime()) return;
+    if (tab !== "apps" && tab !== "activity") return;
+    setSpyStats(readSpyStats());
+  }, [tab]);
+
+  // Once-per-open update check (Android + browser). Zero background wakeups.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const localCode = nativeVersionCode();
+      const result = await checkForUpdate(localCode);
+      if (cancelled || !result.available || !result.info) return;
+      if (isUpdateDismissed(result.info.versionCode)) return;
+      setUpdateInfo(result.info);
+    };
+    const timer = window.setTimeout(() => void check(), 1200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  // Windows shell: poll live engine stats so Home tiles stay truthful
+  const [windowsReady, setWindowsReady] = useState(!windows);
+  useEffect(() => {
+    if (!windows) return;
+    let mounted = true;
+    const tick = async () => {
+      const stats = await windowsStats();
+      if (!mounted || !stats) return;
+      // Mirror the engine's real category mask so both stay in lockstep
+      // (e.g. after a restart, the UI shows exactly what the DNS filter uses).
+      setState((cur) => {
+        const categories = cur.categories.map((_, i) => (stats.mask & (1 << i)) !== 0);
+        const changed = categories.some((on, i) => on !== cur.categories[i]);
+        return {
+          ...cur,
+          shield: stats.active ? "protected" : "off",
+          blockedCount: stats.blocked,
+          totalQueries: stats.total,
+          activeRules: stats.rules,
+          intensity: changed ? computeIntensityName(categories) : cur.intensity,
+          categories: changed ? categories : cur.categories,
+        };
+      });
+      setWindowsReady(true);
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 4000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [windows]);
+
+  // Windows engine publishes its own recent DNS decisions for the Activity tab.
+  useEffect(() => {
+    if (!windows) return;
+    let mounted = true;
+    const pull = async () => {
+      const rows = await getWindowsLogs();
+      if (!mounted || !rows) return;
+      // Frozen logs stay put until the user unfreezes.
+      setState((cur) => (frozenRef.current ? cur : { ...cur, logs: rows }));
+    };
+    void pull();
+    const timer = window.setInterval(() => void pull(), 3000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [windows]);
+
+  // Restore custom allow/block rules from the engine on launch (Windows).
+  useEffect(() => {
+    if (!windows) return;
+    let mounted = true;
+    void getWindowsRules().then((rules) => {
+      if (!mounted || !rules) return;
+      setState((cur) => ({ ...cur, allowDomains: rules.allow, blockDomains: rules.block }));
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [windows]);
 
   const toggleDark = () => {
     const next = !state.dark;
     setState((cur) => ({ ...cur, dark: next }));
-    window.OmitAndroid?.setDarkMode(next);
+    setDarkMode(next);
   };
 
   const handleShieldAction = (target: ShieldState) => {
-    if (window.OmitAndroid) {
+    if (windows) {
+      const enable = target !== "off";
+      void setWindowsShield(enable).then(async (ok) => {
+        const stats = await windowsStats();
+        if (stats) setState((cur) => ({ ...cur, shield: stats.active ? "protected" : "off" }));
+        if (enable && ok) {
+          setToast("Shield on");
+        } else if (enable && !ok) {
+          const status = await windowsShieldStatus();
+          setToast(
+            status && !status.admin
+              ? "Run Omit as administrator to enable"
+              : "Windows shield could not start",
+          );
+        } else {
+          setToast("Shield off");
+        }
+      });
+      return;
+    }
+    const bridge = androidBridge();
+    if (bridge) {
       if (target === "paused") {
-        window.OmitAndroid.pause60s();
+        bridge.pause60s();
       } else if (target === "protected" && state.shield === "paused") {
-        window.OmitAndroid.resumeShield();
+        bridge.resumeShield();
       } else if (target === "protected" && state.shield === "game") {
-        window.OmitAndroid.setOfflineGameMode(false);
+        bridge.setOfflineGameMode(false);
       } else {
-        window.OmitAndroid.toggleShield();
+        bridge.toggleShield();
       }
       return;
     }
@@ -519,15 +625,17 @@ export default function App() {
       categoriesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (window.OmitAndroid) {
-      window.OmitAndroid.selectIntensity(index);
-    }
+    androidBridge()?.selectIntensity(index);
     const nextCats =
       index === 0
         ? [true, false, false, true, false, false, false, false]
         : index === 1
           ? [true, true, true, true, true, true, false, false]
           : Array<boolean>(8).fill(true);
+    if (windows) {
+      const mask = nextCats.reduce((acc, on, i) => (on ? acc | (1 << i) : acc), 0);
+      void setWindowsCategoryMask(mask);
+    }
     setState((cur) => ({
       ...cur,
       intensity: name as OmitStateSnapshot["intensity"],
@@ -536,27 +644,17 @@ export default function App() {
   };
 
   const handleToggleCategory = (index: number) => {
-    if (window.OmitAndroid) {
-      window.OmitAndroid.toggleCategory(index);
-    }
+    androidBridge()?.toggleCategory(index);
+    if (windows) void setWindowsCategoryMask(undefined, index);
     setState((cur) => {
       const nextCats = cur.categories.map((v, i) => (i === index ? !v : v));
-      return {
-        ...cur,
-        categories: nextCats,
-        intensity: computeIntensityName(nextCats),
-      };
+      return { ...cur, categories: nextCats, intensity: computeIntensityName(nextCats) };
     });
   };
 
   const handleToggleEngine = (index: number) => {
-    if (window.OmitAndroid) {
-      window.OmitAndroid.toggleEngine(index);
-    }
-    setState((cur) => ({
-      ...cur,
-      engine: cur.engine.map((v, i) => (i === index ? !v : v)),
-    }));
+    androidBridge()?.toggleEngine(index);
+    setState((cur) => ({ ...cur, engine: cur.engine.map((v, i) => (i === index ? !v : v)) }));
   };
 
   const handleSelectDns = (index: number) => {
@@ -565,11 +663,8 @@ export default function App() {
       setCustomDnsOpen(true);
       return;
     }
-    if (window.OmitAndroid) {
-      window.OmitAndroid.setUpstreamDns(index, "");
-    } else {
-      setState((cur) => ({ ...cur, dns: index }));
-    }
+    androidBridge()?.setUpstreamDns(index, "");
+    setState((cur) => ({ ...cur, dns: index }));
     setDnsOpen(false);
     setToast(`${dnsData[index][0]} active`);
   };
@@ -580,23 +675,11 @@ export default function App() {
       setToast("Enter a valid https:// DoH URL");
       return;
     }
-    if (window.OmitAndroid) {
-      window.OmitAndroid.setUpstreamDns(4, trimmed);
-    } else {
-      setState((cur) => ({ ...cur, dns: 4, customDohUrl: trimmed }));
-    }
+    androidBridge()?.setUpstreamDns(4, trimmed);
+    setState((cur) => ({ ...cur, dns: 4, customDohUrl: trimmed }));
     setCustomDnsOpen(false);
     setDnsOpen(false);
     setToast("Custom DNS saved");
-  };
-
-  const normalizeDomain = (raw: string): string => {
-    let s = raw.trim().toLowerCase();
-    if (s.startsWith("https://")) s = s.slice(8);
-    if (s.startsWith("http://")) s = s.slice(7);
-    const slash = s.indexOf("/");
-    if (slash >= 0) s = s.slice(0, slash);
-    return s.replace(/^\.+|\.+$/g, "").trim();
   };
 
   const handleAddAllow = (rawDomain: string) => {
@@ -605,16 +688,14 @@ export default function App() {
       setToast("Enter a valid domain (e.g. example.com)");
       return;
     }
-    if (window.OmitAndroid) {
-      window.OmitAndroid.addAllowDomain(clean);
-    } else {
-      setState((cur) => ({
-        ...cur,
-        allowDomains: Array.from(new Set([...cur.allowDomains, clean])),
-        blockDomains: cur.blockDomains.filter((d) => d !== clean),
-        recentBlocked: cur.recentBlocked.filter((r) => r.domain !== clean),
-      }));
-    }
+    androidBridge()?.addAllowDomain(clean);
+    if (windows) void setWindowsRule(clean, "allow");
+    setState((cur) => ({
+      ...cur,
+      allowDomains: Array.from(new Set([...cur.allowDomains, clean])),
+      blockDomains: cur.blockDomains.filter((d) => d !== clean),
+      recentBlocked: cur.recentBlocked.filter((r) => r.domain !== clean),
+    }));
     setDomainInput("");
     setToast(`${clean} allowed`);
   };
@@ -625,39 +706,27 @@ export default function App() {
       setToast("Enter a valid domain (e.g. ads.example.com)");
       return;
     }
-    if (window.OmitAndroid) {
-      window.OmitAndroid.addBlockDomain(clean);
-    } else {
-      setState((cur) => ({
-        ...cur,
-        blockDomains: Array.from(new Set([...cur.blockDomains, clean])),
-        allowDomains: cur.allowDomains.filter((d) => d !== clean),
-      }));
-    }
+    androidBridge()?.addBlockDomain(clean);
+    if (windows) void setWindowsRule(clean, "block");
+    setState((cur) => ({
+      ...cur,
+      blockDomains: Array.from(new Set([...cur.blockDomains, clean])),
+      allowDomains: cur.allowDomains.filter((d) => d !== clean),
+    }));
     setDomainInput("");
     setToast(`${clean} blocked`);
   };
 
   const handleRemoveAllow = (domain: string) => {
-    if (window.OmitAndroid) {
-      window.OmitAndroid.removeAllowDomain(domain);
-    } else {
-      setState((cur) => ({
-        ...cur,
-        allowDomains: cur.allowDomains.filter((d) => d !== domain),
-      }));
-    }
+    androidBridge()?.removeAllowDomain(domain);
+    if (windows) void setWindowsRule(domain, "clear");
+    setState((cur) => ({ ...cur, allowDomains: cur.allowDomains.filter((d) => d !== domain) }));
   };
 
   const handleRemoveBlock = (domain: string) => {
-    if (window.OmitAndroid) {
-      window.OmitAndroid.removeBlockDomain(domain);
-    } else {
-      setState((cur) => ({
-        ...cur,
-        blockDomains: cur.blockDomains.filter((d) => d !== domain),
-      }));
-    }
+    androidBridge()?.removeBlockDomain(domain);
+    if (windows) void setWindowsRule(domain, "clear");
+    setState((cur) => ({ ...cur, blockDomains: cur.blockDomains.filter((d) => d !== domain) }));
   };
 
   const handleAddUrl = () => {
@@ -666,33 +735,22 @@ export default function App() {
       setToast("Enter a valid https:// blocklist URL");
       return;
     }
-    if (window.OmitAndroid) {
-      window.OmitAndroid.addCustomListUrl(trimmed);
-    } else {
-      setState((cur) => ({
-        ...cur,
-        customUrls: Array.from(new Set([...cur.customUrls, trimmed])),
-      }));
-    }
+    androidBridge()?.addCustomListUrl(trimmed);
+    setState((cur) => ({ ...cur, customUrls: Array.from(new Set([...cur.customUrls, trimmed])) }));
     setUrlInput("");
     setToast("Blocklist URL added");
   };
 
   const handleRemoveUrl = (url: string) => {
-    if (window.OmitAndroid) {
-      window.OmitAndroid.removeCustomListUrl(url);
-    } else {
-      setState((cur) => ({
-        ...cur,
-        customUrls: cur.customUrls.filter((u) => u !== url),
-      }));
-    }
+    androidBridge()?.removeCustomListUrl(url);
+    setState((cur) => ({ ...cur, customUrls: cur.customUrls.filter((u) => u !== url) }));
   };
 
   const handleSyncLists = () => {
     if (state.syncing) return;
-    if (window.OmitAndroid) {
-      window.OmitAndroid.syncLists();
+    const bridge = androidBridge();
+    if (bridge) {
+      bridge.syncLists();
       return;
     }
     setToast("Lists are up to date");
@@ -700,30 +758,28 @@ export default function App() {
 
   const handleToggleGameMode = () => {
     const next = !state.gameMode;
-    if (window.OmitAndroid) {
-      const ok = window.OmitAndroid.setOfflineGameMode(next);
+    if (next && state.offlineGameCount === 0) {
+      setToast("Mark at least one app below as 'Offline Lock' first");
+      return;
+    }
+    const bridge = androidBridge();
+    if (bridge) {
+      const ok = bridge.setOfflineGameMode(next);
       if (!ok && next) {
         setToast("Mark at least one app below as 'Offline Lock' first");
       }
       return;
     }
-    const gameCnt = apps.filter((a) => a.mode === "Offline Lock").length;
-    if (next && gameCnt === 0) {
-      setToast("Mark at least one app below as 'Offline Lock' first");
-      return;
-    }
-    setState((cur) => ({
-      ...cur,
-      gameMode: next,
-      shield: next ? "game" : "protected",
-    }));
+    setState((cur) => ({ ...cur, gameMode: next, shield: next ? "game" : "protected" }));
   };
 
   const handleSetAppMode = (app: InstalledAppItem, mode: AppMode) => {
-    if (window.OmitAndroid) {
-      window.OmitAndroid.setAppMode(app.pkg, mode);
-    }
+    androidBridge()?.setAppMode(app.pkg, mode);
     setApps((cur) => cur.map((a) => (a.pkg === app.pkg ? { ...a, mode } : a)));
+    setState((cur) => {
+      const offline = cur.offlineGameCount + (mode === "Offline Lock" ? 1 : 0) - (app.mode === "Offline Lock" ? 1 : 0);
+      return { ...cur, offlineGameCount: Math.max(0, offline) };
+    });
     setToast(`${app.name} set to ${mode}`);
     setSelectedAppPkg(null);
   };
@@ -739,20 +795,21 @@ export default function App() {
 
   const handleToggleLogging = () => {
     const next = !state.logging;
-    if (window.OmitAndroid) {
-      window.OmitAndroid.setLogging(next);
-    } else {
-      setState((cur) => ({ ...cur, logging: next, logs: next ? cur.logs : [] }));
-    }
+    androidBridge()?.setLogging(next);
+    setState((cur) => ({ ...cur, logging: next, logs: next ? cur.logs : [] }));
   };
 
   const handleClearLogs = () => {
     setFrozenLogs([]);
-    if (window.OmitAndroid) {
-      window.OmitAndroid.clearLogs();
-    } else {
-      setState((cur) => ({ ...cur, logs: [] }));
-    }
+    androidBridge()?.clearLogs();
+    if (windows) void clearWindowsLogs();
+    setState((cur) => ({ ...cur, logs: [] }));
+  };
+
+  const handleUpdateDismiss = () => {
+    if (updateInfo) dismissUpdate(updateInfo.versionCode);
+    setUpdateInfo(null);
+    setUpdateOpen(false);
   };
 
   const filteredApps = useMemo(() => {
@@ -776,26 +833,28 @@ export default function App() {
   const filteredLogs = useMemo(() => {
     const q = logSearch.trim().toLowerCase();
     return activeLogSource.filter((log) => {
-      const searchMatch =
-        !q || log.domain.toLowerCase().includes(q) || log.category.toLowerCase().includes(q);
+      const searchMatch = !q || log.domain.toLowerCase().includes(q) || log.category.toLowerCase().includes(q);
       if (logFilter === "Blocked") return searchMatch && log.status === "Blocked";
       if (logFilter === "Allowed") return searchMatch && log.status === "Allowed";
       return searchMatch;
     });
   }, [activeLogSource, logSearch, logFilter]);
 
-  const nav = [
-    ["home", "Home", "shield"],
-    ["blocking", "Blocking", "sliders"],
-    ["apps", "Apps", "apps"],
-    ["burner", "Burner", "mail"],
-    ["activity", "Activity", "pulse"],
-  ] as const;
+  const nav = useMemo(
+    () =>
+      [
+        ["home", "Home", "shield"],
+        ["blocking", "Blocking", "sliders"],
+        ["apps", "Apps", "apps"],
+        ["burner", "Burner", "mail"],
+        ["activity", "Activity", "pulse"],
+      ] as const,
+    [],
+  );
 
   const isSelectedLogCustomRuled =
     selectedLog !== null &&
-    (state.allowDomains.includes(selectedLog.domain) ||
-      state.blockDomains.includes(selectedLog.domain));
+    (state.allowDomains.includes(selectedLog.domain) || state.blockDomains.includes(selectedLog.domain));
 
   return (
     <div className="app">
@@ -806,42 +865,55 @@ export default function App() {
           </span>
           <b>Omit</b>
         </button>
-        <button
-          className="icon-btn theme-toggle"
-          onClick={toggleDark}
-          aria-label="Toggle appearance"
-        >
-          <Icon name={state.dark ? "sun" : "moon"} />
-        </button>
+        <div className="topbar-actions">
+          {updateInfo && (
+            <button
+              className="update-pill"
+              onClick={() => setUpdateOpen(true)}
+              aria-label={`Update available v${updateInfo.version}`}
+            >
+              <span className="update-dot" />
+              v{updateInfo.version}
+            </button>
+          )}
+          <button className="icon-btn theme-toggle" onClick={toggleDark} aria-label="Toggle appearance">
+            <Icon name={state.dark ? "sun" : "moon"} />
+          </button>
+        </div>
       </header>
 
       <main>
         <TamperBanner />
         {tab === "home" && (
           <>
-          <Home
-            shield={state.shield}
-            countdown={state.countdown}
-            intensity={state.intensity}
-            offlineGameCount={state.offlineGameCount}
-            blockedCount={state.blockedCount}
-            totalQueries={state.totalQueries}
-            activeRules={state.activeRules}
-            privateDnsHost={state.privateDnsHost}
-            recentBlocked={state.recentBlocked}
-            onShield={handleShieldAction}
-            onIntensity={() => setTab("blocking")}
-            onAllowDomain={handleAddAllow}
-            onOpenPrivateDns={() => {
-              if (window.OmitAndroid) {
-                window.OmitAndroid.openPrivateDnsSettings();
-              } else {
-                setToast("Opening network settings");
-              }
-            }}
-          />
-          <HomeShieldCard onToast={setToast} />
-        </>
+            <Home
+              ready={windowsReady}
+              shield={state.shield}
+              countdown={state.countdown}
+              intensity={state.intensity}
+              offlineGameCount={state.offlineGameCount}
+              blockedCount={state.blockedCount}
+              totalQueries={state.totalQueries}
+              activeRules={state.activeRules}
+              privateDnsHost={state.privateDnsHost}
+              recentBlocked={state.recentBlocked}
+              spyStats={spyStats}
+              onSpy={() => setSpyOpen(true)}
+              onShield={handleShieldAction}
+              onIntensity={() => setTab("blocking")}
+              onAllowDomain={handleAddAllow}
+              onOpenPrivateDns={() => {
+                const bridge = androidBridge();
+                if (bridge) {
+                  bridge.openPrivateDnsSettings();
+                } else {
+                  setToast("Opening network settings");
+                }
+              }}
+            />
+            {!windows && <HomeShieldCard onToast={setToast} />}
+            {windows && <WindowsStatusCard onToast={setToast} />}
+          </>
         )}
 
         {tab === "burner" && (
@@ -880,23 +952,26 @@ export default function App() {
                 <span>{state.categories.filter(Boolean).length} on</span>
               </div>
               <div className="row-list">
-                {categoryData.map((item, index) => (
-                  <ExpandRow
-                    key={item[0]}
-                    title={item[0]}
-                    on={Boolean(state.categories[index])}
-                    onChange={() => handleToggleCategory(index)}
-                    benefit={item[2]}
-                    consequence={item[3]}
-                  />
-                ))}
+                {categoryData.map((item, index) => {
+                  const override = windows ? WINDOWS_CATEGORY_LABELS[item[0]] : undefined;
+                  return (
+                    <ExpandRow
+                      key={item[0]}
+                      title={override?.[0] ?? item[0]}
+                      on={Boolean(state.categories[index])}
+                      onChange={() => handleToggleCategory(index)}
+                      benefit={override?.[1] ?? item[1]}
+                      consequence={override?.[2] ?? item[2]}
+                    />
+                  );
+                })}
               </div>
             </section>
 
             <section className="section">
               <div className="section-title">
                 <div>
-                  <h2>DNS & engine</h2>
+                  <h2>DNS &amp; engine</h2>
                   <p>Encrypted and on-device</p>
                 </div>
               </div>
@@ -911,14 +986,14 @@ export default function App() {
                 <Icon name="arrow" />
               </button>
               <div className="row-list engine-rows">
-                {engineData.map((item, index) => (
+                {(windows ? windowsEngineData : engineData).map((item, index) => (
                   <ExpandRow
                     key={item[0]}
                     title={item[0]}
                     on={Boolean(state.engine[index])}
                     onChange={() => handleToggleEngine(index)}
-                    benefit={item[2]}
-                    consequence={item[3]}
+                    benefit={item[1]}
+                    consequence={item[2]}
                   />
                 ))}
               </div>
@@ -942,26 +1017,57 @@ export default function App() {
                   <b>Allow or block domains</b>
                   <Icon name="arrow" />
                 </button>
-                <button className="select-row" onClick={() => setUrlsOpen(true)}>
-                  <span className="row-icon">
-                    <Icon name="plus" />
-                  </span>
-                  <b>Custom blocklist URLs</b>
-                  <Icon name="arrow" />
-                </button>
-                <button
-                  className="primary-btn"
-                  disabled={state.syncing}
-                  onClick={handleSyncLists}
-                >
-                  {state.syncing ? "Syncing lists..." : "Sync lists"}
-                </button>
+                {/* Remote list sync compiles into the APK's on-device table, so it is Android-only. */}
+                {!windows && (
+                  <button className="select-row" onClick={() => setUrlsOpen(true)}>
+                    <span className="row-icon">
+                      <Icon name="plus" />
+                    </span>
+                    <b>Custom blocklist URLs</b>
+                    <Icon name="arrow" />
+                  </button>
+                )}
+                {!windows && (
+                  <button className="primary-btn" disabled={state.syncing} onClick={handleSyncLists}>
+                    {state.syncing ? "Syncing lists..." : "Sync lists"}
+                  </button>
+                )}
+                {windows && (
+                  <p className="section-hint">
+                    Omit for Windows ships a fixed rule table; add domains above to allow or block them.
+                  </p>
+                )}
               </div>
             </section>
           </div>
         )}
 
-        {tab === "apps" && (
+        {tab === "apps" && windows && (
+          <div className="page">
+            <Header title="Apps" subtitle="Every app on this PC is covered." />
+            <section className="section">
+              <div className="panel">
+                <div className="row-item home-shield-row">
+                  <div className="row-copy">
+                    <strong>System-wide filtering</strong>
+                    <span>
+                      Omit filters DNS for the whole PC, so browsers, games and store apps are
+                      covered without per-app rules.
+                    </span>
+                  </div>
+                  <span className="status-chip on">All apps</span>
+                </div>
+                <div className="home-shield-body">
+                  <div className="home-shield-note">
+                    Need an exception? Add the domain under Blocking → Allow or block domains.
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {tab === "apps" && !windows && (
           <div className="page">
             <Header title="Apps" subtitle="Choose how each app connects." />
 
@@ -980,14 +1086,10 @@ export default function App() {
                         : "Play with zero ads"}
                   </p>
                 </span>
-                <Toggle
-                  on={state.gameMode}
-                  onChange={handleToggleGameMode}
-                  label="Offline Lock"
-                />
+                <Toggle on={state.gameMode} onChange={handleToggleGameMode} label="Offline Lock" />
               </div>
-              <button className="learn-row" onClick={() => setGameDetails(!gameDetails)}>
-                How it works <Icon name="down" size={16} />
+              <button className="learn-row" onClick={() => setGameDetails(!gameDetails)} aria-expanded={gameDetails}>
+                How it works <Icon name={gameDetails ? "up" : "down"} size={16} />
               </button>
               {gameDetails && (
                 <Detail
@@ -996,6 +1098,21 @@ export default function App() {
                 />
               )}
             </section>
+
+            {spyStats.length > 0 && (
+              <section className="section">
+                <button className="select-row spy-row" onClick={() => setSpyOpen(true)}>
+                  <span className="row-icon">
+                    <Icon name="pulse" />
+                  </span>
+                  <span>
+                    <small>Who&apos;s spying?</small>
+                    <b>{spyStats.reduce((sum, s) => sum + s.spyCount, 0)} tracker pings caught</b>
+                  </span>
+                  <Icon name="arrow" />
+                </button>
+              </section>
+            )}
 
             <section className="section apps-section">
               <label className="search">
@@ -1020,31 +1137,26 @@ export default function App() {
               <div className="app-list">
                 {filteredApps.length ? (
                   filteredApps.map((app) => (
-                    <button
-                      key={app.pkg}
-                      className="app-row"
-                      onClick={() => setSelectedAppPkg(app.pkg)}
-                    >
+                    <button key={app.pkg} className="app-row" onClick={() => setSelectedAppPkg(app.pkg)}>
                       <AppBadge app={app} />
                       <span className="app-copy">
                         <b>{app.name}</b>
                         <small>{app.pkg}</small>
                       </span>
-                      <span className={`mode ${app.mode.toLowerCase().replace(" ", "-")}`}>
-                        {app.mode}
-                      </span>
+                      <span className={`mode ${app.mode.toLowerCase().replace(" ", "-")}`}>{app.mode}</span>
                       <Icon name="arrow" size={17} />
                     </button>
                   ))
                 ) : (
                   <div className="empty">
                     <Icon name="apps" />
-                    <p>No matching apps</p>
+                    <p>{windows ? "Per-app rules are available on Android" : "No matching apps"}</p>
                   </div>
                 )}
               </div>
             </section>
           </div>
+        
         )}
 
         {tab === "activity" && (
@@ -1057,10 +1169,7 @@ export default function App() {
                   <Toggle on={state.logging} onChange={handleToggleLogging} label="Live log" />
                   <b>Live log</b>
                 </span>
-                <button
-                  className={`small-btn ${frozen ? "active" : ""}`}
-                  onClick={handleToggleFreeze}
-                >
+                <button className={`small-btn ${frozen ? "active" : ""}`} onClick={handleToggleFreeze}>
                   <Icon name={frozen ? "play" : "pause"} size={16} />
                   {frozen ? "Resume" : "Freeze"}
                 </button>
@@ -1122,7 +1231,7 @@ export default function App() {
         )}
       </main>
 
-      <nav className="bottom-nav">
+      <nav className="bottom-nav" aria-label="Sections">
         {nav.map(([id, label, icon]) => (
           <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}>
             <span>
@@ -1152,9 +1261,7 @@ export default function App() {
                 <span className="radio">{state.dns === index && <i />}</span>
                 <span>
                   <b>{item[0]}</b>
-                  <small>
-                    {index === 4 && state.dns === 4 ? state.customDohUrl : item[1]}
-                  </small>
+                  <small>{index === 4 && state.dns === 4 ? state.customDohUrl : item[1]}</small>
                 </span>
               </button>
             ))}
@@ -1288,7 +1395,12 @@ export default function App() {
               [
                 ["Protected", "shield", "Normal filtering", "Ads and trackers are blocked."],
                 ["Bypassed", "wifi", "Direct internet", "Omit skips & hides VPN from this app."],
-                ["Offline Lock", "game", "No internet or ads", "Online features will not work while Offline Lock is on."],
+                [
+                  "Offline Lock",
+                  "game",
+                  "No internet or ads",
+                  "Online features will not work while Offline Lock is on.",
+                ],
               ] as const
             ).map(([mode, icon, benefit, consequence]) => (
               <button
@@ -1346,8 +1458,9 @@ export default function App() {
             <button
               className="secondary-modal-btn"
               onClick={() => {
-                if (window.OmitAndroid) {
-                  window.OmitAndroid.removeCustomRuleForDomain(selectedLog.domain);
+                const bridge = androidBridge();
+                if (bridge) {
+                  bridge.removeCustomRuleForDomain(selectedLog.domain);
                 } else {
                   handleRemoveAllow(selectedLog.domain);
                   handleRemoveBlock(selectedLog.domain);
@@ -1362,8 +1475,82 @@ export default function App() {
         </Modal>
       )}
 
+      {spyOpen && (
+        <Modal onClose={() => setSpyOpen(false)}>
+          <div className="modal-head">
+            <span className="modal-icon">
+              <Icon name="pulse" />
+            </span>
+            <h2>Who&apos;s spying?</h2>
+            <p>Apps that pinged blocked trackers this session.</p>
+          </div>
+          {spyStats.length === 0 ? (
+            <div className="empty">
+              <Icon name="shield" />
+              <p>No background tracker pings caught yet.</p>
+            </div>
+          ) : (
+            <div className="spy-list">
+              {spyStats.map((stat) => (
+                <div className="spy-item" key={stat.packageName}>
+                  <span className="spy-dot" />
+                  <span>
+                    <b>{stat.appName}</b>
+                    <small>
+                      {stat.spyCount} pings{stat.bgWakeups > 0 ? ` · ${stat.bgWakeups} while sleeping` : ""}
+                    </small>
+                    {stat.lastDomain && <small className="spy-domain">{stat.lastDomain}</small>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <Detail
+            benefit="See exactly which installed apps ping trackers in the background."
+            consequence="Counts are session-only and reset when Omit restarts."
+          />
+        </Modal>
+      )}
+
+      {updateInfo && updateOpen && (
+        <Modal onClose={() => setUpdateOpen(false)}>
+          <div className="modal-head">
+            <span className="modal-icon">
+              <Icon name="download" />
+            </span>
+            <h2>Omit v{updateInfo.version} is ready</h2>
+            <p>{updateInfo.notes || "Faster blocking, fixes, and polish."}</p>
+          </div>
+          <div className="stack-actions">
+            {androidBridge() && updateInfo.otaUrl && updateInfo.otaSha256 && (
+              <button
+                className="primary-btn"
+                onClick={() => {
+                  applyOtaUpdate(updateInfo);
+                  setUpdateOpen(false);
+                }}
+              >
+                Instant ~90 KB update
+              </button>
+            )}
+            <button
+              className="secondary-modal-btn"
+              onClick={() => {
+                downloadAndInstallUpdate(updateInfo);
+                setUpdateOpen(false);
+              }}
+            >
+              {windows ? "Download Windows update" : "Download full app"}
+            </button>
+            <button className="secondary-modal-btn" onClick={handleUpdateDismiss}>
+              Not now
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {toast && (
-        <div className="toast">
+        <div className="toast" role="status">
           <Icon name="check" size={17} />
           {toast}
         </div>
@@ -1391,12 +1578,8 @@ function IntensityOption({
           <small>{item[1]}</small>
         </span>
       </button>
-      <button
-        className="info-toggle"
-        onClick={() => setOpen(!open)}
-        aria-label={`About ${item[0]}`}
-      >
-        <Icon name="down" size={16} />
+      <button className="info-toggle" onClick={() => setOpen(!open)} aria-label={`About ${item[0]}`}>
+        <Icon name={open ? "up" : "down"} size={16} />
       </button>
       {open && <Detail benefit={item[2]} consequence={item[3]} />}
     </div>
@@ -1413,12 +1596,16 @@ function Home({
   activeRules,
   privateDnsHost,
   recentBlocked,
+  spyStats,
+  onSpy,
   onShield,
   onIntensity,
   onAllowDomain,
   onOpenPrivateDns,
+  ready,
 }: {
   shield: ShieldState;
+  ready: boolean;
   countdown: number;
   intensity: string;
   offlineGameCount: number;
@@ -1427,6 +1614,8 @@ function Home({
   activeRules: number;
   privateDnsHost: string;
   recentBlocked: RecentBlockedItem[];
+  spyStats: SpyStatItem[];
+  onSpy: () => void;
   onShield: (state: ShieldState) => void;
   onIntensity: () => void;
   onAllowDomain: (domain: string) => void;
@@ -1442,6 +1631,8 @@ function Home({
     ],
   }[shield];
 
+  const backgroundCaught = spyStats.reduce((sum, s) => sum + s.bgWakeups, 0);
+
   const toggleShield = () => {
     if (shield === "off") onShield("protected");
     else onShield("off");
@@ -1455,15 +1646,12 @@ function Home({
         <button className="shield-button" onClick={toggleShield} aria-label="Toggle Omit">
           <span className="shield-ring">
             <span>
-              <Icon
-                name={shield === "game" ? "game" : shield === "paused" ? "pause" : "shield"}
-                size={47}
-              />
+              <Icon name={shield === "game" ? "game" : shield === "paused" ? "pause" : "shield"} size={47} />
             </span>
           </span>
         </button>
-        <h2>{copy[0]}</h2>
-        <p>{copy[1]}</p>
+        <h2>{ready ? copy[0] : "Checking shield..."}</h2>
+        <p>{ready ? copy[1] : "Reading the local DNS engine"}</p>
         <div className="shield-actions">
           {shield === "protected" && (
             <button className="secondary-btn" onClick={() => onShield("paused")}>
@@ -1517,6 +1705,14 @@ function Home({
         </section>
       )}
 
+      {spyStats.length > 0 && (
+        <button className="intensity-pill spy-pill" onClick={onSpy}>
+          <span>Caught in background</span>
+          <b>{backgroundCaught} pings</b>
+          <Icon name="arrow" size={16} />
+        </button>
+      )}
+
       <section className="recent-section">
         <div className="section-title">
           <h2>Recently blocked</h2>
@@ -1524,7 +1720,7 @@ function Home({
         <div className="recent-list">
           {recentBlocked.length > 0 ? (
             recentBlocked.map((item) => (
-              <div key={item.domain}>
+              <div key={`${item.domain}-${item.time}`}>
                 <span className="domain-icon">{item.domain[0]?.toUpperCase() ?? "D"}</span>
                 <span>
                   <b>{item.domain}</b>
@@ -1536,9 +1732,7 @@ function Home({
               </div>
             ))
           ) : (
-            <div className="recent-empty">
-              Blocked domains appear here for instant 1-tap unblocking
-            </div>
+            <div className="recent-empty">Blocked domains appear here for instant 1-tap unblocking</div>
           )}
         </div>
       </section>
@@ -1548,57 +1742,150 @@ function Home({
 
 function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
   const initial = nativeGetHomeShieldInfo();
-  const [homeOn, setHomeOn] = useState<boolean>(Boolean((initial as unknown as { enabled?: boolean })?.enabled));
+  const [homeOn, setHomeOn] = useState<boolean>(initial.enabled);
   const [homeInfo, setHomeInfo] = useState<HomeShieldInfo>(initial);
 
   const copyText = (txt: string, label: string) => {
     if (!txt) return;
-    try {
-      const fn = (window.VellumAndroid as unknown as { copyToClipboard?: (t: string) => void })?.copyToClipboard;
-      if (fn) fn(txt);
-    } catch { /* ignore */ }
-    navigator.clipboard?.writeText(txt).catch(() => {});
+    copyToClipboard(txt);
     onToast(`${label} copied`);
   };
 
   const toggleHomeShield = () => {
     const next = !homeOn;
+    const ok = nativeSetHomeShield(next);
+    const info = nativeGetHomeShieldInfo();
+    if (next && !ok) {
+      // Ports 8080 and 8088 were both taken; keep the switch honest.
+      setHomeOn(false);
+      setHomeInfo(info);
+      onToast("Could not start the Wi-Fi proxy");
+      return;
+    }
     setHomeOn(next);
-    nativeSetHomeShield(next);
-    setHomeInfo(nativeGetHomeShieldInfo());
-    onToast(next ? "Share Ad-Block to Wi-Fi active" : "Share Ad-Block to Wi-Fi off");
+    setHomeInfo(info);
+    onToast(next ? "Wi-Fi proxy on" : "Wi-Fi proxy off");
   };
+
+  const autoUrl = homeInfo.port ? `http://${homeInfo.lanIp}:${homeInfo.port}/omit.pac` : "";
+  const manualProxy = homeInfo.port ? `${homeInfo.lanIp}:${homeInfo.port}` : "";
 
   return (
     <section className="section">
       <div className="panel">
-        <div className="row-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: 10, borderBottom: homeOn ? "1px solid var(--border)" : "none" }}>
-          <div className="row-copy" style={{ width: "100%" }}>
+        <div className="row-item home-shield-row">
+          <div className="row-copy">
             <strong>Share Ad-Block to Wi-Fi</strong>
-            <span>Protect TVs, consoles &amp; iPhones on this Wi-Fi</span>
+            <span>Route other devices on this Wi-Fi through Omit</span>
           </div>
           <button
             type="button"
             className={`switch ${homeOn ? "on" : ""}`}
             aria-pressed={homeOn}
+            aria-label="Share Ad-Block to Wi-Fi"
             onClick={toggleHomeShield}
           >
             <span className="switch-knob" />
           </button>
         </div>
         {homeOn && (
-          <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13 }}>Auto URL: <strong>http://{homeInfo.lanIp}:{homeInfo.port}/omit.pac</strong></span>
-              <button type="button" className="pill-btn" onClick={() => copyText(`http://${homeInfo.lanIp}:${homeInfo.port}/omit.pac`, "Auto URL")}>Copy</button>
+          <div className="home-shield-body">
+            <div className="home-shield-line">
+              <span>
+                Auto config URL: <strong>{autoUrl}</strong>
+              </span>
+              <button
+                type="button"
+                className="pill-btn"
+                onClick={() => copyText(autoUrl, "Auto config URL")}
+              >
+                Copy
+              </button>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13 }}>Manual Proxy: <strong>{homeInfo.lanIp}:{homeInfo.port}</strong></span>
-              <button type="button" className="pill-btn" onClick={() => copyText(`${homeInfo.lanIp}:${homeInfo.port}`, "Proxy")}>Copy</button>
+            <div className="home-shield-line">
+              <span>
+                HTTP proxy: <strong>{manualProxy}</strong>
+              </span>
+              <button
+                type="button"
+                className="pill-btn"
+                onClick={() => copyText(manualProxy, "Proxy address")}
+              >
+                Copy
+              </button>
             </div>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>{homeInfo.blockedCount} home network ads blocked</div>
+            <div className="home-shield-note">
+              {homeInfo.blockedCount} requests blocked from other devices
+            </div>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function WindowsStatusCard({ onToast }: { onToast: (msg: string) => void }) {
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof windowsShieldStatus>>>(null);
+  const [rules, setRules] = useState<number | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      const [next, stats] = await Promise.all([windowsShieldStatus(), windowsStats()]);
+      if (!mounted) return;
+      if (next) setStatus(next);
+      if (stats) setRules(stats.rules);
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 4000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const rulesMissing = rules === 0;
+
+  return (
+    <section className="section">
+      <div className="panel">
+        <div className="row-item home-shield-row">
+          <div className="row-copy">
+            <strong>System DNS shield</strong>
+            <span>
+              {status?.active
+                ? status.listening
+                  ? "Filtering every app on this PC on 127.0.0.1:53"
+                  : "Shield is on, waiting for port 53"
+                : "Starts a local DNS sinkhole for every app on this PC"}
+            </span>
+          </div>
+          <span className={`status-chip ${status?.active ? "on" : ""}`}>
+            {status?.active ? "Active" : "Off"}
+          </span>
+        </div>
+        <div className="home-shield-body">
+          {rulesMissing && (
+            <div className="home-shield-note warn">
+              No blocklist was found next to Omit. Reinstall so the rule table ships alongside the app.
+            </div>
+          )}
+          {status && !status.admin && (
+            <div className="home-shield-note warn">
+              Run Omit as administrator so Windows DNS can be redirected.
+            </div>
+          )}
+          {status?.message && status.admin && <div className="home-shield-note">{status.message}</div>}
+          <div className="home-shield-line">
+            <span>
+              {rules ? `${rules.toLocaleString("en-US")} rules loaded` : "Loading rule table"} · adapter DNS is
+              restored on exit
+            </span>
+            <button type="button" className="pill-btn" onClick={() => onToast("DNS restore is automatic")}>
+              Info
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -1616,7 +1903,12 @@ class BurnerErrorBoundary extends Component<{ children: ReactNode }, { err: stri
           <div className="panel" style={{ padding: 16 }}>
             <strong>Burner Error</strong>
             <p style={{ fontSize: 13, opacity: 0.8, marginTop: 6 }}>{this.state.err}</p>
-            <button type="button" className="pill-btn" style={{ marginTop: 10 }} onClick={() => this.setState({ err: null })}>
+            <button
+              type="button"
+              className="pill-btn"
+              style={{ marginTop: 10 }}
+              onClick={() => this.setState({ err: null })}
+            >
               Retry
             </button>
           </div>
@@ -1625,6 +1917,14 @@ class BurnerErrorBoundary extends Component<{ children: ReactNode }, { err: stri
     }
     return this.props.children;
   }
+}
+
+interface BurnerPayload {
+  type?: string;
+  email?: { address?: string; error?: string };
+  inbox?: BurnerEmailMsg[];
+  numbers?: BurnerSmsNum[];
+  messages?: BurnerSmsMsg[];
 }
 
 function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
@@ -1636,55 +1936,59 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
   const [smsMsgs, setSmsMsgs] = useState<BurnerSmsMsg[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
+  const onToastRef = useRef(onToast);
+  onToastRef.current = onToast;
+
   const copyText = (txt: string, label: string) => {
     if (!txt) return;
-    try {
-      const fn = (window.VellumAndroid as unknown as { copyToClipboard?: (t: string) => void })?.copyToClipboard;
-      if (fn) fn(txt);
-    } catch { /* ignore */ }
-    navigator.clipboard?.writeText(txt).catch(() => {});
-    onToast(`${label} copied`);
+    copyToClipboard(txt);
+    onToastRef.current(`${label} copied`);
   };
 
   useEffect(() => {
-    (window as unknown as { __onBurnerData?: (raw: string) => void }).__onBurnerData = (raw: string) => {
+    if (!isAndroidRuntime()) return;
+    const handler = (raw: string) => {
       try {
-        const d = JSON.parse(raw);
-        if (d.type === "email") {
-          if (d.email?.address) setEmailAddr(d.email.address);
-          else if (d.email?.error) onToast(d.email.error);
-          if (Array.isArray(d.inbox)) setEmailMsgs(d.inbox);
+        const data = JSON.parse(raw) as BurnerPayload;
+        if (data.type === "email") {
+          if (data.email?.address) setEmailAddr(data.email.address);
+          else if (data.email?.error) onToastRef.current(data.email.error);
+          if (Array.isArray(data.inbox)) setEmailMsgs(data.inbox);
           setLoading(false);
-        } else if (d.type === "smsNumbers") {
-          if (Array.isArray(d.numbers) && d.numbers.length) {
-            setSmsNums(d.numbers);
-            const cur = d.numbers[smsIdx % d.numbers.length];
-            const fn = (window.VellumAndroid as unknown as { fetchBurnerSmsMessagesAsync?: (s: string) => void })?.fetchBurnerSmsMessagesAsync;
-            if (fn) fn(cur.digits);
+        } else if (data.type === "smsNumbers") {
+          if (Array.isArray(data.numbers) && data.numbers.length) {
+            setSmsNums(data.numbers);
+            const current = data.numbers[smsIdx % data.numbers.length];
+            androidBridge()?.fetchBurnerSmsMessagesAsync?.(current.digits);
           } else {
             setLoading(false);
           }
-        } else if (d.type === "smsMessages") {
-          if (Array.isArray(d.messages)) setSmsMsgs(d.messages);
+        } else if (data.type === "smsMessages") {
+          if (Array.isArray(data.messages)) setSmsMsgs(data.messages);
           setLoading(false);
         }
       } catch {
         setLoading(false);
       }
     };
+    (window as unknown as { __onBurnerData?: (raw: string) => void }).__onBurnerData = handler;
     return () => {
       delete (window as unknown as { __onBurnerData?: (raw: string) => void }).__onBurnerData;
     };
   }, [smsIdx]);
 
   const loadEmail = (forceNew = false) => {
-    setLoading(true);
-    const asyncFn = (window.VellumAndroid as unknown as { fetchBurnerEmailAsync?: (f: boolean) => void })?.fetchBurnerEmailAsync;
-    if (asyncFn) {
-      asyncFn(forceNew);
+    const bridge = androidBridge();
+    if (!bridge) {
+      onToast("Burner inbox is available in the Omit app");
       return;
     }
-    setTimeout(() => {
+    setLoading(true);
+    if (bridge.fetchBurnerEmailAsync) {
+      bridge.fetchBurnerEmailAsync(forceNew);
+      return;
+    }
+    window.setTimeout(() => {
       const res = nativeGetBurnerEmail(forceNew);
       if (res.address) setEmailAddr(res.address);
       else if (res.error) onToast(res.error);
@@ -1694,24 +1998,27 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
   };
 
   const loadSms = (idx = smsIdx) => {
+    const bridge = androidBridge();
+    if (!bridge) {
+      onToast("Burner numbers are available in the Omit app");
+      return;
+    }
     setLoading(true);
-    const asyncNums = (window.VellumAndroid as unknown as { fetchBurnerSmsNumbersAsync?: () => void })?.fetchBurnerSmsNumbersAsync;
-    const asyncMsgs = (window.VellumAndroid as unknown as { fetchBurnerSmsMessagesAsync?: (d: string) => void })?.fetchBurnerSmsMessagesAsync;
-    if (smsNums.length && asyncMsgs) {
-      const cur = smsNums[idx % smsNums.length];
-      asyncMsgs(cur.digits);
+    if (smsNums.length && bridge.fetchBurnerSmsMessagesAsync) {
+      const current = smsNums[idx % smsNums.length];
+      bridge.fetchBurnerSmsMessagesAsync(current.digits);
       return;
     }
-    if (asyncNums) {
-      asyncNums();
+    if (bridge.fetchBurnerSmsNumbersAsync) {
+      bridge.fetchBurnerSmsNumbersAsync();
       return;
     }
-    setTimeout(() => {
+    window.setTimeout(() => {
       const nums = smsNums.length ? smsNums : nativeGetBurnerSmsNumbers();
       if (nums.length) {
         setSmsNums(nums);
-        const cur = nums[idx % nums.length];
-        setSmsMsgs(nativeGetBurnerSmsMessages(cur.digits));
+        const current = nums[idx % nums.length];
+        setSmsMsgs(nativeGetBurnerSmsMessages(current.digits));
       } else {
         onToast("Could not load SMS numbers");
       }
@@ -1719,46 +2026,71 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
     }, 20);
   };
 
+  const burnerTabRef = useRef(burnerTab);
+  burnerTabRef.current = burnerTab;
+  const smsIdxRef = useRef(smsIdx);
+  smsIdxRef.current = smsIdx;
+
   useEffect(() => {
+    if (!isAndroidRuntime()) return;
     if (burnerTab === "email" && !emailAddr) loadEmail(false);
     if (burnerTab === "sms" && smsNums.length === 0) loadSms(0);
-    const timer = setInterval(() => {
-      if (burnerTab === "email") loadEmail(false);
-      else loadSms(smsIdx);
+    const timer = window.setInterval(() => {
+      if (burnerTabRef.current === "email") loadEmail(false);
+      else loadSms(smsIdxRef.current);
     }, 6000);
-    return () => clearInterval(timer);
-  }, [burnerTab, smsIdx]);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [burnerTab]);
+
+  const activeNumber = smsNums.length ? smsNums[smsIdx % smsNums.length] : null;
 
   return (
     <div className="page">
-      <Header title="Burner" subtitle="Disposable email &amp; SMS OTPs." />
+      <Header title="Burner" subtitle="Disposable email & SMS OTPs." />
 
-      <div className="seg-tabs" style={{ marginBottom: 14 }}>
-        <button type="button" className={`seg-tab ${burnerTab === "email" ? "active" : ""}`} onClick={() => setBurnerTab("email")}>
+      <div className="seg-tabs">
+        <button
+          type="button"
+          className={`seg-tab ${burnerTab === "email" ? "active" : ""}`}
+          onClick={() => setBurnerTab("email")}
+        >
           Burner Email
         </button>
-        <button type="button" className={`seg-tab ${burnerTab === "sms" ? "active" : ""}`} onClick={() => setBurnerTab("sms")}>
+        <button
+          type="button"
+          className={`seg-tab ${burnerTab === "sms" ? "active" : ""}`}
+          onClick={() => setBurnerTab("sms")}
+        >
           Burner Number
         </button>
       </div>
 
       {burnerTab === "email" ? (
-        <section className="panel" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, wordBreak: "break-all" }}>
-              {loading && !emailAddr ? "Generating inbox..." : (emailAddr || "Tap New to generate")}
+        <section className="panel burner-panel">
+          <div className="burner-head">
+            <div className="burner-address">
+              {loading && !emailAddr ? "Generating inbox..." : emailAddr || "Tap New Address to generate"}
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {emailAddr && <button type="button" className="pill-btn" onClick={() => copyText(emailAddr, "Email")}>Copy Email</button>}
-              <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>{loading ? <span className="omit-spinner" /> : "Refresh"}</button>
-              <button type="button" className="pill-btn" onClick={() => loadEmail(true)}>New Address</button>
+            <div className="burner-actions">
+              {emailAddr && (
+                <button type="button" className="pill-btn" onClick={() => copyText(emailAddr, "Email")}>
+                  Copy Email
+                </button>
+              )}
+              <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>
+                {loading ? <span className="omit-spinner" /> : "Refresh"}
+              </button>
+              <button type="button" className="pill-btn" onClick={() => loadEmail(true)}>
+                New Address
+              </button>
             </div>
           </div>
-          {emailMsgs.length === 0 && <div style={{ fontSize: 13, opacity: 0.65 }}>No emails yet. Tap Refresh to check inbox.</div>}
+          {emailMsgs.length === 0 && <div className="burner-empty">No emails yet. Tap Refresh to check inbox.</div>}
           {emailMsgs.map((m) => (
-            <div key={m.id} className="row-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-              <strong style={{ fontSize: 13.5 }}>{m.subject || m.from}</strong>
-              <span style={{ fontSize: 12.5, opacity: 0.75 }}>{m.intro}</span>
+            <div key={m.id || `${m.subject}-${m.from}`} className="burner-item">
+              <strong>{m.subject || m.from}</strong>
+              <span>{m.intro}</span>
               {m.otp && (
                 <button type="button" className="pill-btn" onClick={() => copyText(m.otp, "OTP")}>
                   Copy OTP: {m.otp}
@@ -1768,27 +2100,49 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
           ))}
         </section>
       ) : (
-        <section className="panel" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              {loading && smsNums.length === 0 ? "Loading live number..." : (smsNums.length ? smsNums[smsIdx % smsNums.length].formatted : "Tap Refresh to load")}
+        <section className="panel burner-panel">
+          <div className="burner-head">
+            <div className="burner-address">
+              {loading && smsNums.length === 0
+                ? "Loading live number..."
+                : activeNumber?.formatted || "Tap Refresh to load"}
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {smsNums.length > 0 && (
+            <div className="burner-actions">
+              {activeNumber && (
                 <>
-                  <button type="button" className="pill-btn" onClick={() => copyText(smsNums[smsIdx % smsNums.length].formatted, "Number")}>Copy Number</button>
-                  <button type="button" className="pill-btn" onClick={() => { const n = smsIdx + 1; setSmsIdx(n); loadSms(n); }}>Switch Number</button>
+                  <button
+                    type="button"
+                    className="pill-btn"
+                    onClick={() => copyText(activeNumber.formatted, "Number")}
+                  >
+                    Copy Number
+                  </button>
+                  <button
+                    type="button"
+                    className="pill-btn"
+                    onClick={() => {
+                      const next = smsIdx + 1;
+                      setSmsIdx(next);
+                      loadSms(next);
+                    }}
+                  >
+                    Switch Number
+                  </button>
                 </>
               )}
-              <button type="button" className="pill-btn" onClick={() => loadSms(smsIdx)}>{loading ? "Checking..." : "Refresh"}</button>
+              <button type="button" className="pill-btn" onClick={() => loadSms(smsIdx)}>
+                {loading ? <span className="omit-spinner" /> : "Refresh"}
+              </button>
             </div>
           </div>
-          <div style={{ fontSize: 12, opacity: 0.65 }}>Public inbox—use only for throwaway sign-ups, never banking.</div>
-          {smsMsgs.length === 0 && <div style={{ fontSize: 13, opacity: 0.65 }}>No SMS yet. Tap Refresh to check.</div>}
+          <div className="burner-note">Public inbox — use only for throwaway sign-ups, never banking.</div>
+          {smsMsgs.length === 0 && <div className="burner-empty">No SMS yet. Tap Refresh to check.</div>}
           {smsMsgs.map((m, i) => (
-            <div key={i} className="row-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-              <strong style={{ fontSize: 13.5 }}>{m.from} · {m.time}</strong>
-              <span style={{ fontSize: 12.5, opacity: 0.8 }}>{m.text}</span>
+            <div key={`${m.from}-${m.time}-${i}`} className="burner-item">
+              <strong>
+                {m.from} · {m.time}
+              </strong>
+              <span>{m.text}</span>
               {m.otp && (
                 <button type="button" className="pill-btn" onClick={() => copyText(m.otp, "Code")}>
                   Copy Code: {m.otp}
@@ -1803,28 +2157,16 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
 }
 
 function TamperBanner() {
-  const [warn, setWarn] = useState<string>(() => {
-    try {
-      const fn = (window.VellumAndroid as unknown as { getTamperWarning?: () => string })?.getTamperWarning;
-      return fn ? fn() : "";
-    } catch { return ""; }
-  });
+  const [warn, setWarn] = useState<string>(() => nativeGetTamperWarning());
   if (!warn) return null;
   return (
-    <div style={{
-      background: "#b91c1c",
-      color: "#ffffff",
-      padding: "10px 14px",
-      borderRadius: 14,
-      marginBottom: 12,
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      fontSize: 12.5,
-      fontWeight: 600,
-    }}>
+    <div className="tamper-banner" role="alert">
       <span>{warn}</span>
-      <button type="button" onClick={() => setWarn("")} style={{ background: "transparent", border: "none", color: "#fff", fontWeight: 700, cursor: "pointer" }}>✕</button>
+      <button type="button" onClick={() => setWarn("")} aria-label="Dismiss warning">
+        ✕
+      </button>
     </div>
   );
 }
+
+export { openExternalUrl };

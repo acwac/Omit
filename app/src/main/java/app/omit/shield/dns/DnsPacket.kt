@@ -111,6 +111,54 @@ object DnsPacket {
         return out.toByteArray()
     }
 
+    /**
+     * Builds a positive A/AAAA answer (used by the system-resolver fallback when every
+     * encrypted upstream is unreachable). Returns null when no matching family exists.
+     */
+    fun buildAddressAnswer(
+        parsed: ParsedDnsQuery,
+        addresses: List<ByteArray>,
+        ttlSeconds: Int = 60
+    ): ByteArray? {
+        val wanted = if (parsed.qtype == 1) 4 else 16
+        val records = addresses.filter { it.size == wanted }
+        if (records.isEmpty()) return null
+
+        val out = ByteArrayOutputStream(64 + records.size * wanted)
+        writeU16(out, parsed.txId)
+        val rdBit = parsed.flags and 0x0100
+        writeU16(out, 0x8000 or rdBit or 0x0080)
+        writeU16(out, 1)
+        writeU16(out, records.size)
+        writeU16(out, 0)
+        writeU16(out, 0)
+
+        // Question section (assumes a single question, which the parser enforces).
+        writeQuestionName(out, parsed.qname)
+        writeU16(out, parsed.qtype)
+        writeU16(out, parsed.qclass)
+
+        for (record in records) {
+            writeU16(out, 0xC00C)
+            writeU16(out, parsed.qtype)
+            writeU16(out, 1)
+            writeU32(out, ttlSeconds.toLong())
+            writeU16(out, record.size)
+            out.write(record)
+        }
+        return out.toByteArray()
+    }
+
+    private fun writeQuestionName(out: ByteArrayOutputStream, qname: String) {
+        val labels = qname.trim('.').split('.')
+        for (label in labels) {
+            if (label.isEmpty() || label.length > 63) continue
+            out.write(label.length)
+            out.write(label.toByteArray(Charsets.US_ASCII))
+        }
+        out.write(0)
+    }
+
     fun inspectResponse(resp: ByteArray): ResponseInspection? {
         if (resp.size < 12) return null
         val flags = readU16(resp, 2)

@@ -1,7 +1,6 @@
 package app.omit.shield.net
 
-import android.net.VpnService
-import app.omit.shield.data.VellumPrefs
+import app.omit.shield.data.OmitPrefs
 import app.omit.shield.dns.BlockEngine
 import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
@@ -39,26 +38,44 @@ object HomeShieldServer {
         return "127.0.0.1"
     }
 
-    fun start(vpn: VpnService?) {
-        if (running.getAndSet(true)) return
-        pool.execute {
-            val ss = try {
-                activePort = 8080
-                ServerSocket(8080)
+    /** True once a listening socket is bound. */
+    val isRunning: Boolean get() = running.get() && serverSocket != null
+
+    /**
+     * Binds synchronously so the UI can read [activePort] the moment the toggle
+     * returns. Port 8080 is the documented default; 8088 is the fallback when
+     * something else already owns 8080.
+     */
+    fun start(): Boolean {
+        if (isRunning) return true
+        val bound = try {
+            ServerSocket(8080).also { activePort = 8080 }
+        } catch (_: Throwable) {
+            try {
+                ServerSocket(8088).also { activePort = 8088 }
             } catch (_: Throwable) {
-                activePort = 8088
-                ServerSocket(8088)
+                null
             }
-            serverSocket = ss
+        }
+        if (bound == null) {
+            // Leave the object clean so a later attempt can succeed.
+            running.set(false)
+            serverSocket = null
+            return false
+        }
+        serverSocket = bound
+        running.set(true)
+        pool.execute {
             while (running.get()) {
                 try {
-                    val client = ss.accept()
-                    pool.execute { handleClient(client, vpn) }
+                    val client = bound.accept()
+                    pool.execute { handleClient(client) }
                 } catch (_: Throwable) {
                     if (!running.get()) break
                 }
             }
         }
+        return true
     }
 
     fun stop() {
@@ -87,7 +104,7 @@ object HomeShieldServer {
         return null
     }
 
-    private fun handleClient(client: Socket, vpn: VpnService?) {
+    private fun handleClient(client: Socket) {
         client.use { sock ->
             try {
                 val input = sock.getInputStream()
@@ -125,7 +142,7 @@ object HomeShieldServer {
                 }
 
                 val outbound = Socket()
-                vpn?.protect(outbound)
+                outbound.soTimeout = 20000
                 outbound.connect(java.net.InetSocketAddress(host, port), 5000)
                 val outStream = outbound.getOutputStream()
                 if (method == "CONNECT") {

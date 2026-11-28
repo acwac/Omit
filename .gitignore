@@ -17,6 +17,10 @@ captures/
 ui-web/node_modules/
 ui-web/.vite/
 
+# Tauri / Rust build output
+desktop-windows/src-tauri/target/
+desktop-windows/node_modules/
+
 # OS / Editor
 .DS_Store
 Thumbs.db
