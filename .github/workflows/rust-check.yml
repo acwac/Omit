@@ -33,11 +33,12 @@ jobs:
         shell: pwsh
         run: |
           cd desktop-windows/src-tauri
-          cargo check --message-format short 2>&1 | Tee-Object -FilePath ..\check.log
+          cargo check --message-format short *> ..\check.log
           $code = $LASTEXITCODE
-          $summary = Get-Content ..\check.log | Select-String -Pattern "^(error|warning: unused)" | Select-Object -First 12
+          Get-Content ..\check.log
+          $summary = (Get-Content ..\check.log | Select-String -Pattern "error" | Select-Object -First 10) -join " || "
           if ($code -ne 0) {
-            Write-Output "::error title=cargo check failed::$(($summary -join ' | ').Replace('%','%25').Replace([char]10,'%0A').Replace([char]13,''))"
+            Write-Output "::error title=cargo check failed::$summary"
             exit 1
           }
           Write-Output "::notice title=cargo check clean::No Rust errors or warnings."
