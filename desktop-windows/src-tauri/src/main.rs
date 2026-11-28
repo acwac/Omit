@@ -1283,28 +1283,32 @@ fn serve_lan_http(
     table: &Arc<BlockTable>,
     rules: &Arc<std::sync::Mutex<RuleSets>>,
 ) -> Option<()> {
-    use std::io::{BufRead, BufReader, Read, Write};
+    use std::io::{Read, Write};
     stream.set_read_timeout(Some(Duration::from_secs(20))).ok()?;
-    let mut reader = BufReader::new(stream.try_clone().ok()?);
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line).ok()?;
-    if request_line.is_empty() {
-        return None;
-    }
-    let mut headers: Vec<String> = Vec::new();
+
+    // Headers are read one byte at a time on purpose. A BufReader would pull
+    // in the bytes after the blank line, which for CONNECT is the start of the
+    // TLS handshake and for POST is the body; both must reach the origin intact.
+    let mut head: Vec<u8> = Vec::with_capacity(1024);
+    let mut byte = [0u8; 1];
     loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).ok()? == 0 {
-            break;
-        }
-        if line == "\r\n" || line == "\n" {
-            break;
-        }
-        headers.push(line);
-        if headers.len() > 100 {
-            break;
+        match stream.read(&mut byte) {
+            Ok(1) => {
+                head.push(byte[0]);
+                if head.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+                if head.len() > 32 * 1024 {
+                    return None;
+                }
+            }
+            _ => return None,
         }
     }
+    let header_text = String::from_utf8_lossy(&head).to_string();
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines.next()?.to_string();
+    let headers: Vec<String> = lines.filter(|l| !l.is_empty()).map(|l| l.to_string()).collect();
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         return None;
@@ -1354,7 +1358,8 @@ fn serve_lan_http(
         stream
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .ok()?;
-        // Anything already buffered belongs to the tunnel.
+        // Nothing past the header block was consumed, so a pipelined ClientHello
+        // is still on the socket and the plain copy below carries it.
         let mut client = stream.try_clone().ok()?;
         let mut upstream = origin.try_clone().ok()?;
         std::thread::spawn(move || {
@@ -1395,7 +1400,13 @@ fn serve_lan_http(
             .ok()?;
         return Some(());
     }
-    let mut origin = std::net::TcpStream::connect((host.as_str(), port)).ok()?;
+    let Ok(mut origin) = std::net::TcpStream::connect((host.as_str(), port)) else {
+        stream
+            .write_all(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+            .ok()?;
+        return None;
+    };
+    // The request line is rebuilt in origin-form and hop-by-hop headers dropped.
     let mut out = format!("{method} {path} HTTP/1.1\r\n");
     for line in &headers {
         let name = line.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
@@ -1406,34 +1417,14 @@ fn serve_lan_http(
             continue;
         }
         out.push_str(line);
+        out.push_str("\r\n");
     }
     out.push_str("\r\n");
     origin.write_all(out.as_bytes()).ok()?;
-    let mut buf = [0u8; 8192];
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                if origin.write_all(&buf[..n]).is_err() {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-    }
+    // Whatever followed the header block is the body and goes through untouched.
+    let _ = std::io::copy(&mut stream, &mut origin);
     let _ = origin.shutdown(std::net::Shutdown::Write);
-    let mut back = [0u8; 8192];
-    loop {
-        match origin.read(&mut back) {
-            Ok(0) => break,
-            Ok(n) => {
-                if stream.write_all(&back[..n]).is_err() {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-    }
+    let _ = std::io::copy(&mut origin, &mut stream);
     Some(())
 }
 
