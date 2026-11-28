@@ -111,8 +111,6 @@ class MainActivity : Activity() {
                 }
 
                 addJavascriptInterface(bridge, "OmitAndroid")
-                // Legacy alias: an OTA-updated bundle from an older build still binds this name.
-                addJavascriptInterface(bridge, "VellumAndroid")
 
                 webViewClient = object : WebViewClient() {
                     override fun shouldInterceptRequest(
@@ -258,7 +256,6 @@ class MainActivity : Activity() {
         jsBridge?.shutdown()
         try {
             webView?.removeJavascriptInterface("OmitAndroid")
-            webView?.removeJavascriptInterface("VellumAndroid")
             webView?.destroy()
         } catch (_: Throwable) {}
         webView = null

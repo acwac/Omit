@@ -106,7 +106,7 @@ if [ ! -f "$KEYSTORE" ]; then
     -keypass "$KEY_PASS" \
     -alias "$KEY_ALIAS" \
     -keyalg RSA -keysize 2048 -validity 10000 \
-    -dname "CN=Vellum Shield, OU=Mobile, O=Vellum, L=Jaipur, ST=RJ, C=IN" >/dev/null 2>&1
+    -dname "CN=Omit Shield, OU=Mobile, O=Omit, L=Jaipur, ST=RJ, C=IN" >/dev/null 2>&1
 fi
 
 mkdir -p "$(dirname "$OUT_APK")"
