@@ -78,7 +78,8 @@ object OmitPrefs {
         private set
     @Volatile var lastSyncedEpochMs: Long = 0L
         private set
-    @Volatile var compiledRuleCount: Int = 209332
+    /** Rules in the shipped table; 0 until the engine reports the real count. */
+    @Volatile var compiledRuleCount: Int = 0
         private set
     @Volatile var isSyncingLists: Boolean = false
         private set
@@ -134,7 +135,7 @@ object OmitPrefs {
             blockedQueries.set(prefs.getLong("stat_blocked", 0L))
             cachedQueries.set(prefs.getLong("stat_cached", 0L))
             lastSyncedEpochMs = prefs.getLong("last_synced_ms", 0L)
-            compiledRuleCount = prefs.getInt("compiled_rule_count", 209332)
+            compiledRuleCount = prefs.getInt("compiled_rule_count", 0)
 
             initialized = true
         }
