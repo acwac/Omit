@@ -34,6 +34,7 @@ import {
   clearWindowsRule,
   setWindowsLogging,
   windowsDnsLock,
+  windowsInstalledCode,
   windowsState,
   setWindowsShield,
   windowsShieldStatus,
@@ -501,7 +502,10 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
-      const localCode = nativeVersionCode();
+      // On desktop the shell reports its own version through the manifest call.
+      const localCode = isWindowsRuntime()
+        ? await windowsInstalledCode()
+        : nativeVersionCode();
       const result = await checkForUpdate(localCode);
       if (cancelled || !result.available || !result.info) return;
       if (isUpdateDismissed(result.info.versionCode)) return;

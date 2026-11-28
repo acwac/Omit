@@ -109,6 +109,10 @@ export interface UpdateInfo {
 
 declare global {
   interface Window {
+    /** Always injected by Tauri v2, even when withGlobalTauri is off. */
+    __TAURI_INTERNALS__?: {
+      invoke?: (cmd: string, args?: Record<string, unknown>, options?: unknown) => Promise<unknown>;
+    };
     OmitAndroid?: NativeBridge;
     __omitOnNativeState?: (state: OmitStateSnapshot) => void;
     __omitOnNativeApps?: (apps: InstalledAppItem[]) => void;
@@ -134,6 +138,13 @@ type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) =>
 
 function tauriInvoke(): TauriInvoke | undefined {
   if (typeof window === "undefined") return undefined;
+  // `__TAURI_INTERNALS__` is always present in a Tauri webview; the
+  // `__TAURI__` convenience global only exists when withGlobalTauri is enabled.
+  const internals = window.__TAURI_INTERNALS__;
+  if (internals && typeof internals.invoke === "function") {
+    const invoke = internals.invoke.bind(internals);
+    return <T = unknown>(cmd: string, args?: Record<string, unknown>) => invoke(cmd, args) as Promise<T>;
+  }
   const invoke = window.__TAURI__?.core?.invoke;
   return typeof invoke === "function" ? invoke : undefined;
 }
@@ -455,6 +466,23 @@ export async function checkForUpdate(currentVersionCode: number): Promise<Update
       window.setTimeout(() => finish({ available: false, info: null, error: "timeout" }), 12000);
     });
   }
+  // Desktop asks the shell first: version.json lives on the website, not in the
+  // Windows bundle, so a relative fetch would 404 there.
+  const invoke = tauriInvoke();
+  if (invoke) {
+    try {
+      const raw = await invoke<Record<string, unknown> | null>("get_windows_update");
+      if (raw) {
+        const info = normalizeUpdateInfo(raw);
+        if (info) {
+          return { available: Boolean(info.versionCode > currentVersionCode), info };
+        }
+      }
+      return { available: false, info: null, error: "no update manifest" };
+    } catch {
+      return { available: false, info: null, error: "offline" };
+    }
+  }
   try {
     const response = await fetch("./version.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -663,6 +691,19 @@ export async function clearWindowsRule(domain: string): Promise<boolean> {
     return await invoke<boolean>("clear_windows_rule", { domain });
   } catch {
     return false;
+  }
+}
+
+/** The desktop build's own version code (2.5.0 -> 250). */
+export async function windowsInstalledCode(): Promise<number> {
+  const invoke = tauriInvoke();
+  if (!invoke) return 0;
+  try {
+    const raw = await invoke<Record<string, unknown> | null>("get_windows_update");
+    const code = Number(raw?.installedVersionCode ?? 0);
+    return Number.isFinite(code) ? code : 0;
+  } catch {
+    return 0;
   }
 }
 

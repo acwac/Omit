@@ -1001,6 +1001,37 @@ fn set_windows_rules(domain: String, mode: String, state: tauri::State<AppState>
     true
 }
 
+/// Fetches version.json for the updater (the file lives on the website, not in
+/// the bundle). Returns None when offline so the UI simply shows no update.
+#[tauri::command]
+fn get_windows_update() -> Option<serde_json::Value> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(8000))
+        .build()
+        .ok()?;
+    let response = client
+        .get("https://acwac.github.io/Omit/version.json")
+        .header("cache-control", "no-cache")
+        .send()
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let mut doc = response.json::<serde_json::Value>().ok()?;
+    // The desktop build is versioned by Cargo; expose it as a code the shared
+    // updater logic can compare (2.5.0 -> 250).
+    let parts: Vec<u64> = env!("CARGO_PKG_VERSION")
+        .split('.')
+        .filter_map(|p| p.parse::<u64>().ok())
+        .collect();
+    let code = parts.first().copied().unwrap_or(0) * 100 + parts.get(1).copied().unwrap_or(0) * 10
+        + parts.get(2).copied().unwrap_or(0);
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert("installedVersionCode".to_string(), serde_json::json!(code));
+    }
+    Some(doc)
+}
+
 /// Turns DNS logging on or off and remembers the choice.
 #[tauri::command]
 fn set_windows_logging(enabled: bool, state: tauri::State<AppState>) -> bool {
@@ -1680,6 +1711,7 @@ fn main() {
             set_windows_dns,
             clear_windows_rule,
             set_windows_logging,
+            get_windows_update,
             get_windows_state,
             get_windows_dns_lock,
             get_windows_dns_conflict,

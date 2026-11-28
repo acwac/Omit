@@ -1,0 +1,63 @@
+name: Rust check
+
+# Temporary diagnostic. Actions logs and run artifacts are not readable from
+# every environment, but check-run annotations are, so the outcome is published
+# as an annotation.
+on:
+  push:
+    paths:
+      - "desktop-windows/src-tauri/**"
+      - ".github/workflows/rust-check.yml"
+  workflow_dispatch:
+
+jobs:
+  cargo-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "desktop-windows/src-tauri -> target"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Build Web UI
+        run: |
+          cd ui-web
+          npm ci
+          npm run build
+
+      - name: cargo check
+        shell: pwsh
+        run: |
+          cd desktop-windows/src-tauri
+          cargo check --message-format short *> ..\check.log
+          $code = $LASTEXITCODE
+          Get-Content ..\check.log
+          $summary = (Get-Content ..\check.log | Select-String -Pattern "error" | Select-Object -First 10) -join " || "
+          if ($code -ne 0) {
+            Write-Output "::error title=cargo check failed::$summary"
+            exit 1
+          }
+          Write-Output "::notice title=cargo check clean::No Rust errors or warnings."
+          exit 0
+
+      - name: tauri build
+        shell: pwsh
+        run: |
+          cd desktop-windows
+          npm install
+          npx tauri build 2>&1 | Tee-Object -FilePath ..\tauri-build.log
+          if ($LASTEXITCODE -ne 0) {
+            $lines = Get-Content ..\tauri-build.log | Select-String -Pattern "error|failed|Error" | Select-Object -Last 8
+            Write-Output "::error title=tauri build failed::$(($lines -join ' | '))"
+            exit 1
+          }
+          $nsis = Get-ChildItem -Path "src-tauri/release/bundle/nsis/*.exe","src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsis) {
+            Write-Output "::error title=no installer::tauri build exited 0 but produced no NSIS installer."
+            exit 1
+          }
+          Write-Output "::notice title=installer built::$($nsis.Name) $($nsis.Length) bytes"
