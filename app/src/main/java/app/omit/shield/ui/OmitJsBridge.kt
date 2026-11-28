@@ -314,12 +314,6 @@ class OmitJsBridge(
     }
 
     @JavascriptInterface
-    fun isTvMode(): Boolean {
-        val uiModeManager = activity.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
-        return uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-    }
-
-    @JavascriptInterface
     fun getSpyStatsJson(): String {
         val arr = org.json.JSONArray()
         for (s in OmitPrefs.getSpyStatsSnapshot().take(20)) {

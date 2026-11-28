@@ -32,6 +32,7 @@ import {
   setWindowsEngine,
   setWindowsRule,
   clearWindowsRule,
+  setWindowsLogging,
   windowsDnsLock,
   windowsState,
   setWindowsShield,
@@ -525,6 +526,10 @@ export default function App() {
         ...snapshot,
         // Theme is owned by the renderer (localStorage), not the Rust side.
         dark: cur.dark,
+        // Logs and recent blocks are streamed by their own pollers, which run
+        // more often; never overwrite their newer snapshot with this one.
+        logs: cur.logs,
+        recentBlocked: cur.recentBlocked,
       }));
     });
     return () => {
@@ -772,7 +777,6 @@ export default function App() {
       return;
     }
     androidBridge()?.addAllowDomain(clean);
-    if (windows) void setWindowsRule(clean, "allow");
     setState((cur) => ({
       ...cur,
       allowDomains: Array.from(new Set([...cur.allowDomains, clean])),
@@ -780,6 +784,12 @@ export default function App() {
       recentBlocked: cur.recentBlocked.filter((r) => r.domain !== clean),
     }));
     setDomainInput("");
+    if (windows) {
+      void setWindowsRule(clean, "allow").then((ok) => {
+        setToast(ok ? `${clean} allowed` : `Could not allow ${clean}`);
+      });
+      return;
+    }
     setToast(`${clean} allowed`);
   };
 
@@ -790,7 +800,19 @@ export default function App() {
       return;
     }
     androidBridge()?.addBlockDomain(clean);
-    if (windows) void setWindowsRule(clean, "block");
+    if (windows) {
+      void setWindowsRule(clean, "block").then((ok) => {
+        if (ok) setToast(`${clean} blocked`);
+        else setToast(`Could not block ${clean}`);
+      });
+      setDomainInput("");
+      setState((cur) => ({
+        ...cur,
+        blockDomains: Array.from(new Set([...cur.blockDomains, clean])),
+        allowDomains: cur.allowDomains.filter((d) => d !== clean),
+      }));
+      return;
+    }
     setState((cur) => ({
       ...cur,
       blockDomains: Array.from(new Set([...cur.blockDomains, clean])),
@@ -879,6 +901,16 @@ export default function App() {
   const handleToggleLogging = () => {
     const next = !state.logging;
     androidBridge()?.setLogging(next);
+    if (windows) {
+      void setWindowsLogging(next).then((ok) => {
+        if (!ok) {
+          setToast("Live log could not be changed");
+          return;
+        }
+        setState((cur) => ({ ...cur, logging: next, logs: next ? cur.logs : [] }));
+      });
+      return;
+    }
     setState((cur) => ({ ...cur, logging: next, logs: next ? cur.logs : [] }));
   };
 
@@ -1644,7 +1676,7 @@ export default function App() {
             <p>{updateInfo.notes || "Faster blocking, fixes, and polish."}</p>
           </div>
           <div className="stack-actions">
-            {androidBridge() && updateInfo.otaUrl && updateInfo.otaSha256 && (
+            {isAndroidRuntime() && updateInfo.otaUrl && updateInfo.otaSha256 && (
               <button
                 className="primary-btn"
                 onClick={() => {
@@ -1652,7 +1684,7 @@ export default function App() {
                   setUpdateOpen(false);
                 }}
               >
-                Instant ~90 KB update
+                Instant UI-only update
               </button>
             )}
             <button

@@ -51,6 +51,8 @@ static ANTI_STORM_TTL: AtomicBool = AtomicBool::new(true);
 static DOH_CANARY: AtomicBool = AtomicBool::new(true);
 static START_WITH_WINDOWS: AtomicBool = AtomicBool::new(true);
 static CAPTIVE_FALLBACK: AtomicBool = AtomicBool::new(true);
+/// When off, queries are still filtered but nothing is recorded.
+static LOGGING_ENABLED: AtomicBool = AtomicBool::new(true);
 /// Index into DOH_UPSTREAMS; 4 means "use the custom URL".
 static DNS_INDEX: AtomicU64 = AtomicU64::new(0);
 static CUSTOM_DOH_URL: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
@@ -396,6 +398,7 @@ fn persist_settings(table: &BlockTable, rules: &RuleSets) {
         "antiStormTtl": ANTI_STORM_TTL.load(Ordering::Relaxed),
         "dohCanary": DOH_CANARY.load(Ordering::Relaxed),
         "startWithWindows": START_WITH_WINDOWS.load(Ordering::Relaxed),
+        "logging": LOGGING_ENABLED.load(Ordering::Relaxed),
         "allow": allow,
         "block": block,
         "_rules": table.hashes.len(),
@@ -429,6 +432,7 @@ fn load_settings(path: &PathBuf, rules: &mut RuleSets) {
     ANTI_STORM_TTL.store(flag("antiStormTtl", true), Ordering::Relaxed);
     DOH_CANARY.store(flag("dohCanary", true), Ordering::Relaxed);
     START_WITH_WINDOWS.store(flag("startWithWindows", true), Ordering::Relaxed);
+    LOGGING_ENABLED.store(flag("logging", true), Ordering::Relaxed);
     for key in ["allow", "block"] {
         if let Some(items) = doc.get(key).and_then(|v| v.as_array()) {
             let set = if key == "allow" { &mut rules.allow } else { &mut rules.block };
@@ -497,19 +501,23 @@ fn serve_query(table: &Arc<BlockTable>, rules: &RuleSets, query: &[u8]) -> Optio
         let qtype = u16::from_be_bytes([query[qname_end], query[qname_end + 1]]);
         if qtype == 65 {
             BLOCKED_QUERIES.fetch_add(1, Ordering::Relaxed);
-            push_log(&qname, "Browser DNS Guard", true);
+            if LOGGING_ENABLED.load(Ordering::Relaxed) {
+                push_log(&qname, "Browser DNS Guard", true);
+            }
             return build_blocked_response(query, qname_end);
         }
     }
     match table.verdict(&qname, mask, rules) {
         Verdict::Blocked(hit) => {
             BLOCKED_QUERIES.fetch_add(1, Ordering::Relaxed);
-            push_log(&qname, category_label(hit), true);
+            if LOGGING_ENABLED.load(Ordering::Relaxed) {
+                push_log(&qname, category_label(hit), true);
+            }
             build_blocked_response(query, qname_end)
         }
         Verdict::Allow => {
             let answer = resolve_upstream(query);
-            if answer.is_some() {
+            if answer.is_some() && LOGGING_ENABLED.load(Ordering::Relaxed) {
                 push_log(&qname, "Upstream", false);
             }
             answer
@@ -990,6 +998,20 @@ fn set_windows_rules(domain: String, mode: String, state: tauri::State<AppState>
         }
         persist_settings(&state.table, &rules);
     }
+    true
+}
+
+/// Turns DNS logging on or off and remembers the choice.
+#[tauri::command]
+fn set_windows_logging(enabled: bool, state: tauri::State<AppState>) -> bool {
+    LOGGING_ENABLED.store(enabled, Ordering::Relaxed);
+    if !enabled {
+        if let Ok(mut ring) = LOG_RING.lock() {
+            ring.clear();
+        }
+    }
+    let rules = state.rules.lock().unwrap_or_else(|e| e.into_inner());
+    persist_settings(&state.table, &rules);
     true
 }
 
@@ -1496,7 +1518,7 @@ fn get_windows_state(state: tauri::State<AppState>) -> StateSnapshot {
         allow_domains: allow,
         block_domains: block,
         custom_urls: Vec::new(),
-        logging: true,
+        logging: LOGGING_ENABLED.load(Ordering::Relaxed),
         syncing: false,
         recent_blocked: get_windows_recent_blocked(),
         logs: log_rows(LOG_CAPACITY),
@@ -1657,6 +1679,7 @@ fn main() {
             set_windows_engine,
             set_windows_dns,
             clear_windows_rule,
+            set_windows_logging,
             get_windows_state,
             get_windows_dns_lock,
             get_windows_dns_conflict,

@@ -75,7 +75,6 @@ export interface NativeBridge {
   setLogging(enabled: boolean): void;
   clearLogs(): void;
   openPrivateDnsSettings(): void;
-  isTvMode?(): boolean;
   getSpyStatsJson?(): string;
   openExternalUrl?(url: string): void;
   copyToClipboard?(text: string): void;
@@ -236,18 +235,6 @@ export interface SpyStatItem {
   spyCount: number;
   bgWakeups: number;
   lastDomain: string;
-}
-
-export function isTvMode(): boolean {
-  const bridge = androidBridge();
-  try {
-    if (bridge?.isTvMode) return bridge.isTvMode();
-  } catch {
-    /* ignore */
-  }
-  if (typeof window === "undefined") return false;
-  const params = new URLSearchParams(window.location.search);
-  return params.get("tv") === "1";
 }
 
 export function readSpyStats(): SpyStatItem[] {
@@ -674,6 +661,17 @@ export async function clearWindowsRule(domain: string): Promise<boolean> {
   if (!invoke) return false;
   try {
     return await invoke<boolean>("clear_windows_rule", { domain });
+  } catch {
+    return false;
+  }
+}
+
+/** Turns DNS logging on or off (the engine stops recording when false). */
+export async function setWindowsLogging(enabled: boolean): Promise<boolean> {
+  const invoke = tauriInvoke();
+  if (!invoke) return false;
+  try {
+    return await invoke<boolean>("set_windows_logging", { enabled });
   } catch {
     return false;
   }
