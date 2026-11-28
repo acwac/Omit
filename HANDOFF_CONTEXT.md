@@ -206,3 +206,57 @@ focus rings, 10-foot type scale; leanback launcher entry is in the manifest)
    - When `remote.versionCode > local.versionCode`, display a clean non-intrusive **"Update available (vX.Y.Z)"** pill/banner on Omit's Home screen with release notes and a 1-tap **Download Update** action!
 4. **Full `README.md` & Repository Documentation Overhaul (Explicit User Requirement)**:
    - Completely update and polish `README.md` (plus `LICENSE`, release changelogs, and GitHub repo description/topics) to cover the full cross-platform Omit ecosystem (**Android Phone**, **Android TV / Google TV / Fire TV**, and **Windows 10/11 `.exe`**), direct download links to the GitHub Pages site & GitHub Releases, all new Phase-2 capabilities (ISP Unblocker + honest limits, Spy Detector, Play-Games-Safe Smart Context Mode, Clean Open), battery/privacy architecture, and clean build docs.
+
+---
+
+## Platform parity audit (2.5.0)
+
+Every user-visible control was traced from the shared React shell to a real
+implementation on each platform. The rule for this codebase: **if a control is
+rendered, it must change real engine state on that platform.** Platform-specific
+UI is hidden rather than stubbed.
+
+### Where the platforms differ, and why
+
+| Surface | Android | Windows |
+| --- | --- | --- |
+| Filtering model | `VpnService` TUN redirect | loopback DNS sinkhole + adapter DNS |
+| Per-app modes (Protected / Bypassed / Offline Lock) | yes (per-package VPN) | not applicable — replaced by "Bypassed domains" (custom allow rules) |
+| Custom blocklist URLs / Sync lists | yes (compiled into the on-device table) | hidden — the rule table ships fixed with the installer |
+| Wi-Fi proxy ("Share Ad-Block to Wi-Fi") | yes | hidden |
+| Burner email / SMS | `BurnerManager` (mail.tm → Guerrilla Mail, anonymsms) | same providers via Rust commands, state in `burner.json` |
+| Upstream DNS | DoH chain in `DohClient` | DoH (RFC 8484) with plain-DNS fallback |
+| Update payload | UI-only OTA zip + full APK | NSIS installer from `version.json` |
+
+### Engine switches, end to end
+
+The five rows on Blocking → DNS & engine map to
+`FilterMetadata.ENGINE_KEYS` / `WINDOWS_ENGINE_KEYS` and must stay index-aligned:
+
+| Index | Key | Android | Windows |
+| --- | --- | --- | --- |
+| 0 | `cname_uncloak` | CNAME chain inspection in `OmitVpnService` | checks the CNAME chain before allowing |
+| 1 | `anti_storm_ttl` | 300 s vs 15 s blocked TTL | same TTL choice in `build_blocked_response` |
+| 2 | `block_doh_canary` | blocks DoH canary names + strips SVCB type 65 | strips type 65 |
+| 3 | `captive_portal_fallback` | plain-DNS fallback in `DohClient` | plain-DNS fallback in `resolve_upstream` |
+| 4 | `start_on_boot` | `BootReceiver` honours it | writes/removes `HKCU\...\Run\Omit` |
+
+### What is persisted on Windows
+
+`settings.json` in the Tauri app-config dir: shield state, category mask, DNS
+index + custom URL, all five engine switches, logging, and the allow/block rule
+sets. Burner state lives in `burner.json` beside it. Restarting resumes the
+previous shield state when the process is elevated.
+
+### Guard rails for future changes
+
+- The Windows shell is detected through `window.__TAURI_INTERNALS__` (always
+  injected); `withGlobalTauri` stays on so `window.__TAURI__` also exists.
+  Without this the UI silently falls back to the Android layout.
+- `version.json` is fetched through the shell on desktop (bundled copy as the
+  offline fallback); a relative `fetch` 404s inside the app.
+- Never add a control that only flips local React state — route it through
+  `bridge.ts` to a Kotlin method and a Rust command, or hide it per platform.
+- Actions logs/artifacts are often unreadable from automation. To inspect a
+  Windows build failure, publish the outcome as a **check-run annotation**
+  (`::error title=...::message`) — that channel is readable.
