@@ -1001,23 +1001,38 @@ fn set_windows_rules(domain: String, mode: String, state: tauri::State<AppState>
     true
 }
 
-/// Fetches version.json for the updater (the file lives on the website, not in
-/// the bundle). Returns None when offline so the UI simply shows no update.
+/// version.json for the updater. Read live from the website so a release is
+/// seen immediately; the copy bundled at install time keeps the check honest
+/// when the machine is offline.
 #[tauri::command]
-fn get_windows_update() -> Option<serde_json::Value> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(8000))
-        .build()
-        .ok()?;
-    let response = client
-        .get("https://acwac.github.io/Omit/version.json")
-        .header("cache-control", "no-cache")
-        .send()
-        .ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let mut doc = response.json::<serde_json::Value>().ok()?;
+fn get_windows_update(app: tauri::AppHandle) -> Option<serde_json::Value> {
+    let fetch_remote = || -> Option<serde_json::Value> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(8000))
+            .build()
+            .ok()?;
+        let response = client
+            .get("https://acwac.github.io/Omit/version.json")
+            .header("cache-control", "no-cache")
+            .send()
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        response.json::<serde_json::Value>().ok()
+    };
+    let read_bundled = || -> Option<serde_json::Value> {
+        let dir = app.path().resource_dir().ok()?;
+        for candidate in [dir.join("version.json"), dir.join("_up_").join("version.json")] {
+            if let Ok(text) = std::fs::read_to_string(&candidate) {
+                if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) {
+                    return Some(doc);
+                }
+            }
+        }
+        None
+    };
+    let mut doc = fetch_remote().or_else(read_bundled)?;
     // The desktop build is versioned by Cargo; expose it as a code the shared
     // updater logic can compare (2.5.0 -> 250).
     let parts: Vec<u64> = env!("CARGO_PKG_VERSION")

@@ -36,7 +36,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../app/src/main/assets/omit_starter.vbin": "omit_starter.vbin"
+      "../../app/src/main/assets/omit_starter.vbin": "omit_starter.vbin",
+      "../../version.json": "version.json"
     },
     "windows": {
       "nsis": {
