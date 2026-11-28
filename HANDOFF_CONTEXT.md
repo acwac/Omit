@@ -260,3 +260,55 @@ previous shield state when the process is elevated.
 - Actions logs/artifacts are often unreadable from automation. To inspect a
   Windows build failure, publish the outcome as a **check-run annotation**
   (`::error title=...::message`) — that channel is readable.
+
+## Wi-Fi sharing (2.5.1)
+
+Both platforms can share the filter with the LAN, by different mechanisms
+because the operating systems allow different things.
+
+**Android** (`net/HomeShieldServer.kt`) runs an HTTP proxy on 8080 (fallback
+8088) plus a PAC file at `/omit.pac`. Root causes of the 2.5.0 breakage, both
+fixed:
+
+- `getLanIp()` accepted only `192.168.*` and `10.*`, so a phone on
+  `172.16.0.0/12`, `100.64.0.0/10` (CGNAT, Tailscale) or a hotspot interface
+  advertised `127.0.0.1` and clients proxied through themselves. It now accepts
+  RFC1918, link-local and CGNAT, prefers `wlan`/`eth`, and skips
+  `tun`/`ppp`/`rmnet`. Binds the LAN address, falling back to all interfaces.
+- The non-CONNECT path forwarded `headerBytes` verbatim: the absolute-URI
+  request line (`GET http://host/ HTTP/1.1`) plus `Proxy-Connection` went
+  straight to origin servers, which answer 400. Requests are now rewritten to
+  origin-form and hop-by-hop headers are stripped. CONNECT is unchanged.
+
+DNS sharing is deliberately **not** offered on Android: an unprivileged app
+cannot bind port 53, and Private DNS needs DoT, so it could not work.
+
+**Windows** (`set_windows_lan_sharing` in `main.rs`) binds a second DNS
+listener on the LAN address only — `0.0.0.0:53` would collide with the loopback
+sinkhole — and a proxy on 8080 with CONNECT tunnelling, and opens firewall
+rules `Omit LAN DNS` (UDP 53) and `Omit LAN Proxy` (TCP 8080), private profile
+only. Requires elevation, same as the shield. Disabling the shield disables
+sharing. The proxy does not proxy this PC to itself; the sinkhole already
+filters this PC, and a self-proxy risks a loop.
+
+Verified offline: Kotlin end-to-end through the real socket server (PAC body,
+origin receives `GET /hello?q=1` with no `Proxy-Connection`, 400 no longer
+possible), plus browser screenshots at 420px with zero overflow.
+
+## Burner legality (2.5.1)
+
+Answer given plainly, and the UI now states it:
+
+- Disposable **email is legal**. No jurisdiction bans it; the worst case is the
+  destination site terminating the account under its terms. Never use for
+  banking, government, healthcare or anything needing recovery — this is now
+  the in-app note on the email tab.
+- Burner **SMS is legal to receive**, but free numbers are shared and their
+  inboxes are public: anyone can read the codes, and numbers are recycled, so a
+  code may belong to a stranger's account. Using one to access an account you
+  do not own is unlawful. The SMS tab states the public-inbox and recycling
+  risk, says to use it only for accounts you own, and forbids banking,
+  payments, government, healthcare and persistent accounts.
+- Nothing in the feature automates the provider or evades a check, and no code
+  was added that would.
+

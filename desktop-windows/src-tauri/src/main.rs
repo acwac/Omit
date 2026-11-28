@@ -17,6 +17,10 @@ static LISTENER_RUNNING: AtomicBool = AtomicBool::new(false);
 static LISTENER_SOCKETS: std::sync::Mutex<Vec<Arc<UdpSocket>>> = std::sync::Mutex::new(Vec::new());
 /// Worker threads still parked in recv_from.
 static WORKERS_ALIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const LAN_PROXY_PORT: u16 = 8080;
+static LAN_BLOCKED: AtomicU64 = AtomicU64::new(0);
+static LAN_WORKERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Most recent DNS decisions, capped so memory stays flat on long sessions.
 static LOG_RING: std::sync::Mutex<std::collections::VecDeque<LogEntry>> =
     std::sync::Mutex::new(std::collections::VecDeque::new());
@@ -565,7 +569,6 @@ fn spawn_workers(
                             TOTAL_QUERIES.fetch_add(1, Ordering::Relaxed);
                             let snapshot = rules.lock().unwrap_or_else(|e| e.into_inner());
                             let resp = serve_query(&table, &snapshot, &buf[..len]);
-                            drop(snapshot);
                             if let Some(resp) = resp {
                                 let _ = sock.send_to(&resp, src);
                             }
@@ -931,6 +934,8 @@ fn toggle_windows_shield(enable: bool, state: tauri::State<AppState>) -> bool {
         true
     } else {
         SHIELD_ACTIVE.store(false, Ordering::SeqCst);
+        stop_lan_listener();
+        set_firewall_for_lan(false);
         restore_windows_dns();
         stop_dns_sinkhole();
         {
@@ -1104,6 +1109,393 @@ fn get_windows_rules(state: tauri::State<AppState>) -> (Vec<String>, Vec<String>
     allow.sort();
     block.sort();
     (allow, block)
+}
+
+// ---------------------------------------------------------------------------
+// Share the filter with the local network
+//
+// Windows has no per-app VPN, so "Wi-Fi sharing" here means: the sinkhole also
+// answers on the LAN address and tells other devices where to find it. A
+// device that sets this PC as its DNS server is then filtered.
+// ---------------------------------------------------------------------------
+
+/// The LAN address other devices should point their DNS at.
+#[cfg(target_os = "windows")]
+fn lan_ipv4() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // Route lookup: the source address Windows would use for an internet route
+    // is by definition a reachable LAN address.
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "(Find-NetRoute -RemoteIPAddress 8.8.8.8 -ErrorAction SilentlyContinue | \
+              Select-Object -First 1).IPAddress",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let ip = text.trim().lines().next()?.trim().to_string();
+    if ip.is_empty() || ip == "127.0.0.1" {
+        None
+    } else {
+        Some(ip)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn lan_ipv4() -> Option<String> {
+    None
+}
+
+/// Opens (or closes) the firewall rules that let the LAN reach DNS and the
+/// proxy port. Both are needed: a device may use either one.
+fn set_firewall_for_lan(enable: bool) {
+    let script = if enable {
+        "foreach ($r in @(@('Omit LAN DNS','UDP',53), @('Omit LAN Proxy','TCP',8080))) { \
+           if (-not (Get-NetFirewallRule -DisplayName $r[0] -ErrorAction SilentlyContinue)) { \
+             New-NetFirewallRule -DisplayName $r[0] -Direction Inbound -Action Allow \
+               -Protocol $r[1] -LocalPort $r[2] -Profile Private | Out-Null } }"
+    } else {
+        "Get-NetFirewallRule -DisplayName 'Omit LAN DNS','Omit LAN Proxy' -ErrorAction SilentlyContinue | \
+           Remove-NetFirewallRule -ErrorAction SilentlyContinue"
+    };
+    run_powershell(script);
+}
+
+/// Shares the filter with the rest of the LAN: a DNS listener on the LAN
+/// address plus a small HTTP proxy, both backed by the same block table.
+/// Loopback filtering is untouched, so this PC keeps working either way.
+fn start_lan_listener(table: Arc<BlockTable>, rules: Arc<std::sync::Mutex<RuleSets>>) -> bool {
+    let Some(ip) = lan_ipv4() else {
+        return false;
+    };
+    // The sinkhole already owns 127.0.0.1:53, so bind the LAN address only:
+    // binding 0.0.0.0 here would collide with it.
+    let Ok(dns_socket) = UdpSocket::bind(format!("{ip}:53")) else {
+        return false;
+    };
+    let _ = dns_socket.set_read_timeout(Some(Duration::from_millis(250)));
+    let dns_socket = Arc::new(dns_socket);
+    let mut spawned = 0usize;
+    for _ in 0..2 {
+        let sock = Arc::clone(&dns_socket);
+        let table = Arc::clone(&table);
+        let rules = Arc::clone(&rules);
+        LAN_WORKERS.fetch_add(1, Ordering::SeqCst);
+        let ok = std::thread::Builder::new()
+            .name("omit-lan-dns".into())
+            .spawn(move || {
+                let mut buf = [0u8; 1500];
+                while LAN_SHARING.load(Ordering::Relaxed) {
+                    match sock.recv_from(&mut buf) {
+                        Ok((len, src)) => {
+                            if len < 12 {
+                                continue;
+                            }
+                            TOTAL_QUERIES.fetch_add(1, Ordering::Relaxed);
+                            let snapshot = rules.lock().unwrap_or_else(|e| e.into_inner());
+                            let blocked = match read_qname(&buf[..len]) {
+                                Some((name, _)) => matches!(
+                                    table.verdict(
+                                        &name,
+                                        ACTIVE_MASK.load(Ordering::Relaxed) as u8,
+                                        &snapshot
+                                    ),
+                                    Verdict::Blocked(_)
+                                ),
+                                None => false,
+                            };
+                            let response = serve_query(&table, &snapshot, &buf[..len]);
+                            drop(snapshot);
+                            if blocked {
+                                LAN_BLOCKED.fetch_add(1, Ordering::Relaxed);
+                            }
+                            if let Some(response) = response {
+                                let _ = sock.send_to(&response, src);
+                            }
+                        }
+                        Err(err) => match err.kind() {
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {}
+                            _ => std::thread::sleep(Duration::from_millis(50)),
+                        },
+                    }
+                }
+                LAN_WORKERS.fetch_sub(1, Ordering::SeqCst);
+            })
+            .is_ok();
+        if ok {
+            spawned += 1;
+        } else {
+            LAN_WORKERS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    if spawned == 0 {
+        return false;
+    }
+
+    // The PAC file and proxy live on the same port as the Android card.
+    if let Ok(tcp) = std::net::TcpListener::bind(("0.0.0.0", LAN_PROXY_PORT)) {
+        let _ = tcp.set_nonblocking(true);
+        let listener = Arc::new(tcp);
+        std::thread::Builder::new()
+            .name("omit-lan-proxy".into())
+            .spawn(move || {
+                while LAN_SHARING.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            let table = Arc::clone(&table);
+                            let rules = Arc::clone(&rules);
+                            std::thread::spawn(move || {
+                                let _ = serve_lan_http(stream, &table, &rules);
+                            });
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                        Err(_) => std::thread::sleep(Duration::from_millis(200)),
+                    }
+                }
+            })
+            .ok();
+    }
+    true
+}
+
+fn stop_lan_listener() {
+    LAN_SHARING.store(false, Ordering::SeqCst);
+    // Let the loops notice the flag before the ports are reused.
+    let deadline = std::time::Instant::now() + Duration::from_millis(800);
+    while LAN_WORKERS.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Minimal HTTP proxy for devices pointed at this PC. HTTPS is tunnelled via
+/// CONNECT with the hostname filtered; plain HTTP is rewritten to origin-form.
+fn serve_lan_http(
+    mut stream: std::net::TcpStream,
+    table: &Arc<BlockTable>,
+    rules: &Arc<std::sync::Mutex<RuleSets>>,
+) -> Option<()> {
+    use std::io::{BufRead, BufReader, Read, Write};
+    stream.set_read_timeout(Some(Duration::from_secs(20))).ok()?;
+    let mut reader = BufReader::new(stream.try_clone().ok()?);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line).ok()?;
+    if request_line.is_empty() {
+        return None;
+    }
+    let mut headers: Vec<String> = Vec::new();
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).ok()? == 0 {
+            break;
+        }
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+        headers.push(line);
+        if headers.len() > 100 {
+            break;
+        }
+    }
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let method = parts[0];
+    let target = parts[1];
+
+    if method == "GET" && target.ends_with("/omit.pac") {
+        let ip = LAN_ADDRESS.lock().map(|i| i.clone()).unwrap_or_default();
+        let pac = format!(
+            "function FindProxyForURL(url, host) {{ return \"PROXY {ip}:{LAN_PROXY_PORT}; DIRECT\"; }}"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            pac.len(),
+            pac
+        );
+        stream.write_all(response.as_bytes()).ok()?;
+        return Some(());
+    }
+
+    let is_blocked = |host: &str| -> bool {
+        let mask = ACTIVE_MASK.load(Ordering::Relaxed) as u8;
+        let snapshot = rules.lock().unwrap_or_else(|e| e.into_inner());
+        matches!(table.verdict(host, mask, &snapshot), Verdict::Blocked(_))
+    };
+
+    if method == "CONNECT" {
+        let (host, port) = match target.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), p.parse::<u16>().unwrap_or(443)),
+            None => (target.to_string(), 443u16),
+        };
+        if is_blocked(&host) {
+            LAN_BLOCKED.fetch_add(1, Ordering::Relaxed);
+            BLOCKED_QUERIES.fetch_add(1, Ordering::Relaxed);
+            stream
+                .write_all(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+                .ok()?;
+            return Some(());
+        }
+        let Ok(mut origin) = std::net::TcpStream::connect((host.as_str(), port)) else {
+            stream
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+                .ok()?;
+            return None;
+        };
+        stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .ok()?;
+        // Anything already buffered belongs to the tunnel.
+        let mut client = stream.try_clone().ok()?;
+        let mut upstream = origin.try_clone().ok()?;
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut client, &mut upstream);
+            let _ = upstream.shutdown(std::net::Shutdown::Write);
+        });
+        let _ = std::io::copy(&mut origin, &mut stream);
+        return Some(());
+    }
+
+    if method != "GET" && method != "POST" && method != "HEAD" {
+        stream
+            .write_all(b"HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n")
+            .ok()?;
+        return None;
+    }
+
+    let authority = target.strip_prefix("http://").unwrap_or(target);
+    let (authority, path) = match authority.split_once('/') {
+        Some((a, p)) => (a, format!("/{p}")),
+        None => (authority, "/".to_string()),
+    };
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) => (h.to_string(), p.parse::<u16>().unwrap_or(80)),
+        None => (authority.to_string(), 80u16),
+    };
+    if host.is_empty() {
+        stream
+            .write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+            .ok()?;
+        return None;
+    }
+    if is_blocked(&host) {
+        LAN_BLOCKED.fetch_add(1, Ordering::Relaxed);
+        BLOCKED_QUERIES.fetch_add(1, Ordering::Relaxed);
+        stream
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+            .ok()?;
+        return Some(());
+    }
+    let mut origin = std::net::TcpStream::connect((host.as_str(), port)).ok()?;
+    let mut out = format!("{method} {path} HTTP/1.1\r\n");
+    for line in &headers {
+        let name = line.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
+        if matches!(
+            name.as_str(),
+            "proxy-connection" | "connection" | "keep-alive" | "proxy-authorization" | "te" | "trailer" | "upgrade"
+        ) {
+            continue;
+        }
+        out.push_str(line);
+    }
+    out.push_str("\r\n");
+    origin.write_all(out.as_bytes()).ok()?;
+    let mut buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if origin.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let _ = origin.shutdown(std::net::Shutdown::Write);
+    let mut back = [0u8; 8192];
+    loop {
+        match origin.read(&mut back) {
+            Ok(0) => break,
+            Ok(n) => {
+                if stream.write_all(&back[..n]).is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    Some(())
+}
+
+static LAN_SHARING: AtomicBool = AtomicBool::new(false);
+static LAN_ADDRESS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Enables sharing: the sinkhole keeps answering on loopback while a second
+/// listener serves the LAN address, so other devices can use this PC either as
+/// their DNS server or as their HTTP proxy.
+#[tauri::command]
+fn set_windows_lan_sharing(enable: bool, state: tauri::State<AppState>) -> bool {
+    if !enable {
+        LAN_SHARING.store(false, Ordering::SeqCst);
+        set_firewall_for_lan(false);
+        stop_lan_listener();
+        if let Ok(mut ip) = LAN_ADDRESS.lock() {
+            ip.clear();
+        }
+        return true;
+    }
+    if LAN_SHARING.load(Ordering::SeqCst) {
+        return true;
+    }
+    if !is_elevated() {
+        return false;
+    }
+    if state.table.hashes.is_empty() {
+        return false;
+    }
+    let Some(ip) = lan_ipv4() else {
+        return false;
+    };
+    if let Ok(mut slot) = LAN_ADDRESS.lock() {
+        *slot = ip.clone();
+    }
+    // The worker loops exit when this is false, so it must be set before the
+    // listeners start, and rolled back if they cannot bind.
+    LAN_SHARING.store(true, Ordering::SeqCst);
+    if !start_lan_listener(Arc::clone(&state.table), Arc::clone(&state.rules)) {
+        LAN_SHARING.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = LAN_ADDRESS.lock() {
+            slot.clear();
+        }
+        return false;
+    }
+    set_firewall_for_lan(true);
+    true
+}
+
+#[tauri::command]
+fn get_windows_lan_info() -> serde_json::Value {
+    let ip = LAN_ADDRESS.lock().map(|i| i.clone()).unwrap_or_default();
+    serde_json::json!({
+        "enabled": LAN_SHARING.load(Ordering::Relaxed),
+        // DNS server address other devices should use.
+        "dnsAddress": ip,
+        // PAC URL / proxy for browsers, mirroring the Android card.
+        "pacUrl": if ip.is_empty() { String::new() } else { format!("http://{ip}:{LAN_PROXY_PORT}/omit.pac") },
+        "proxy": if ip.is_empty() { String::new() } else { format!("{ip}:{LAN_PROXY_PORT}") },
+        "port": LAN_PROXY_PORT,
+        "blockedCount": LAN_BLOCKED.load(Ordering::Relaxed),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1702,6 +2094,8 @@ fn main() {
             get_windows_update,
             get_windows_state,
             get_windows_dns_lock,
+            set_windows_lan_sharing,
+            get_windows_lan_info,
             get_windows_recent_blocked,
             get_burner_email,
             get_burner_inbox,

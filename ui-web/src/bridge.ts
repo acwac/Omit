@@ -707,6 +707,36 @@ export async function windowsInstalledCode(): Promise<number> {
   }
 }
 
+export interface WindowsLanInfo {
+  enabled: boolean;
+  dnsAddress: string;
+  pacUrl: string;
+  proxy: string;
+  port: number;
+  blockedCount: number;
+}
+
+/** Shares the filter with other devices on the local network. */
+export async function setWindowsLanSharing(enable: boolean): Promise<boolean> {
+  const invoke = tauriInvoke();
+  if (!invoke) return false;
+  try {
+    return await invoke<boolean>("set_windows_lan_sharing", { enable });
+  } catch {
+    return false;
+  }
+}
+
+export async function getWindowsLanInfo(): Promise<WindowsLanInfo | null> {
+  const invoke = tauriInvoke();
+  if (!invoke) return null;
+  try {
+    return await invoke<WindowsLanInfo>("get_windows_lan_info");
+  } catch {
+    return null;
+  }
+}
+
 /** Turns DNS logging on or off (the engine stops recording when false). */
 export async function setWindowsLogging(enabled: boolean): Promise<boolean> {
   const invoke = tauriInvoke();

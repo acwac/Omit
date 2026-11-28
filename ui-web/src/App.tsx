@@ -33,6 +33,8 @@ import {
   setWindowsRule,
   clearWindowsRule,
   setWindowsLogging,
+  setWindowsLanSharing,
+  getWindowsLanInfo,
   windowsDnsLock,
   windowsInstalledCode,
   windowsState,
@@ -45,6 +47,7 @@ import {
   type BurnerSmsNum,
   type DnsLogItem,
   type HomeShieldInfo,
+  type WindowsLanInfo,
   type InstalledAppItem,
   type OmitStateSnapshot,
   type RecentBlockedItem,
@@ -1030,7 +1033,7 @@ export default function App() {
                 }
               }}
             />
-            {!windows && <HomeShieldCard onToast={setToast} />}
+            {!windows && <HomeShieldCard onToast={setToast} shieldOn={state.shield === "protected"} />}
             {windows && <WindowsStatusCard onToast={setToast} />}
           </>
         )}
@@ -1898,7 +1901,7 @@ function Home({
   );
 }
 
-function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
+function HomeShieldCard({ onToast, shieldOn }: { onToast: (msg: string) => void; shieldOn: boolean }) {
   const initial = nativeGetHomeShieldInfo();
   const [homeOn, setHomeOn] = useState<boolean>(initial.enabled);
   const [homeInfo, setHomeInfo] = useState<HomeShieldInfo>(initial);
@@ -1927,6 +1930,9 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
 
   const autoUrl = homeInfo.port ? `http://${homeInfo.lanIp}:${homeInfo.port}/omit.pac` : "";
   const manualProxy = homeInfo.port ? `${homeInfo.lanIp}:${homeInfo.port}` : "";
+  // The proxy filters through the on-device engine, which only runs while the
+  // VPN is up. Without it devices would browse unfiltered through the phone.
+  const needsShield = !shieldOn;
 
   return (
     <section className="section">
@@ -1934,7 +1940,7 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
         <div className="row-item home-shield-row">
           <div className="row-copy">
             <strong>Share Ad-Block to Wi-Fi</strong>
-            <span>Route other devices on this Wi-Fi through Omit</span>
+            <span>Filter other devices on this Wi-Fi through this phone</span>
           </div>
           <button
             type="button"
@@ -1948,7 +1954,7 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
         </div>
         {homeOn && (
           <div className="home-shield-body">
-            <div className="home-shield-line">
+            <div className="home-shield-line stacked">
               <span>
                 Auto config URL: <strong>{autoUrl}</strong>
               </span>
@@ -1973,8 +1979,19 @@ function HomeShieldCard({ onToast }: { onToast: (msg: string) => void }) {
               </button>
             </div>
             <div className="home-shield-note">
+              On the other device, open Wi-Fi settings → this network → Proxy → Manual, and enter
+              the proxy address above (or the auto config URL). Both devices must be on the same
+              Wi-Fi, and this phone has to stay on while they browse.
+            </div>
+
+            <div className="home-shield-note">
               {homeInfo.blockedCount} requests blocked from other devices
             </div>
+            {needsShield && (
+              <div className="home-shield-note warn">
+                Turn the shield on too — without it this proxy passes traffic unfiltered.
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2040,6 +2057,7 @@ function WindowsStatusCard({ onToast }: { onToast: (msg: string) => void }) {
             </div>
           )}
           {status?.message && status.admin && <div className="home-shield-note">{status.message}</div>}
+          <LanShareBlock shieldActive={!!status?.active} onToast={onToast} />
           <div className="home-shield-line">
             <span>
               {rules ? `${rules.toLocaleString("en-US")} rules loaded` : "Loading rule table"} ·{" "}
@@ -2068,6 +2086,84 @@ function WindowsStatusCard({ onToast }: { onToast: (msg: string) => void }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function LanShareBlock({ shieldActive, onToast }: { shieldActive: boolean; onToast: (msg: string) => void }) {
+  const [info, setInfo] = useState<WindowsLanInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    setInfo(await getWindowsLanInfo());
+  };
+
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true);
+    const next = !info?.enabled;
+    const ok = await setWindowsLanSharing(next);
+    await refresh();
+    setBusy(false);
+    if (next && !ok) {
+      onToast(shieldActive ? "Could not share on this network" : "Turn the shield on first");
+      return;
+    }
+    onToast(next ? "Sharing with this network" : "Sharing off");
+  };
+
+  return (
+    <div className="home-shield-body" style={{ borderTop: "1px solid var(--line)", marginTop: 10, paddingTop: 10 }}>
+      <div className="row-item home-shield-row">
+        <div className="row-copy">
+          <strong>Share with this network</strong>
+          <span>Filter phones and TVs by pointing their DNS at this PC</span>
+        </div>
+        <button
+          type="button"
+          className={`toggle ${info?.enabled ? "on" : ""}`}
+          onClick={() => void toggle()}
+          disabled={busy || !shieldActive}
+          aria-label="Share filter with the local network"
+        >
+          <span />
+        </button>
+      </div>
+      {info?.enabled ? (
+        <>
+          <div className="home-shield-line">
+            <span>DNS server for other devices</span>
+            <button type="button" className="pill-btn" onClick={() => {
+              copyToClipboard(info.dnsAddress);
+              onToast("DNS address copied");
+            }}>{info.dnsAddress || "—"}</button>
+          </div>
+          <div className="home-shield-line stacked">
+            <span>Browser proxy or auto config</span>
+            <button type="button" className="pill-btn" onClick={() => {
+              copyToClipboard(info.pacUrl);
+              onToast("Proxy address copied");
+            }}>{info.pacUrl || "—"}</button>
+          </div>
+          <div className="home-shield-note">
+            On the other device, set its DNS to the address above, or point its Wi-Fi proxy at
+            {" "}{info.proxy}. Both devices must be on the same network. {info.blockedCount} requests
+            blocked from other devices.
+          </div>
+        </>
+      ) : (
+        <div className="home-shield-note">
+          {shieldActive
+            ? "Opens port 53 and 8080 to your local network and adds a Windows Firewall rule for private networks. Turn off to remove it."
+            : "Turn the shield on, then enable sharing."}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2307,6 +2403,10 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
               </button>
             </div>
           </div>
+          <div className="burner-note">
+            Disposable addresses are legal, but the inbox is public and can vanish. Never use one
+            for banking, government, healthcare, work, or any account you need to recover.
+          </div>
           {emailMsgs.length === 0 && <div className="burner-empty">No emails yet. Tap Refresh to check inbox.</div>}
           {emailMsgs.map((m) => (
             <div key={m.id || `${m.subject}-${m.from}`} className="burner-item">
@@ -2356,7 +2456,12 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
               </button>
             </div>
           </div>
-          <div className="burner-note">Public inbox — use only for throwaway sign-ups, never banking.</div>
+          <div className="burner-note">
+            This number is shared and its inbox is public: anyone can read the codes sent to it, and
+            numbers get recycled. Only use it for accounts you own. Never use it for banking, payments,
+            government, healthcare, or anything you need to keep — and never to sign into an account
+            that is not yours. Doing that is illegal.
+          </div>
           {smsMsgs.length === 0 && <div className="burner-empty">No SMS yet. Tap Refresh to check.</div>}
           {smsMsgs.map((m, i) => (
             <div key={`${m.from}-${m.time}-${i}`} className="burner-item">

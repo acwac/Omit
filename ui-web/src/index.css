@@ -2040,6 +2040,23 @@ html.dark .update-pill {
   min-width: 0;
 }
 
+/* A long URL next to a copy button cannot fit one row on a phone; stack it
+   instead of letting the pill run past the panel edge. */
+.home-shield-line.stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.home-shield-line.stacked .pill-btn {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-all;
+  text-align: left;
+}
+
 .home-shield-note {
   font-size: 12px;
   color: var(--muted);
