@@ -224,7 +224,7 @@ UI is hidden rather than stubbed.
 | Per-app modes (Protected / Bypassed / Offline Lock) | yes (per-package VPN) | not applicable — replaced by "Bypassed domains" (custom allow rules) |
 | Custom blocklist URLs / Sync lists | yes (compiled into the on-device table) | hidden — the rule table ships fixed with the installer |
 | Wi-Fi proxy ("Share Ad-Block to Wi-Fi") | yes | hidden |
-| Burner email / SMS | `BurnerManager` (mail.tm → Guerrilla Mail, anonymsms) | same providers via Rust commands, state in `burner.json` |
+| Burner email | `BurnerManager` (mail.tm → Guerrilla Mail) | same providers via Rust commands, state in `burner.json` |
 | Upstream DNS | DoH chain in `DohClient` | DoH (RFC 8484) with plain-DNS fallback |
 | Update payload | UI-only OTA zip + full APK | NSIS installer from `version.json` |
 
@@ -281,7 +281,22 @@ fixed:
   origin-form and hop-by-hop headers are stripped. CONNECT is unchanged.
 
 DNS sharing is deliberately **not** offered on Android: an unprivileged app
-cannot bind port 53, and Private DNS needs DoT, so it could not work.
+cannot bind port 53 (`ip_unprivileged_port_start` is 1024, and Android does not
+grant `CAP_NET_BIND_SERVICE` to apps), and Private DNS needs DoT, so it could
+not work. `Asms.ai`-style public SMS was removed at the user's request.
+
+Android has no way to intercept a *client* device's traffic — it is not the
+gateway — so the client must be told where the proxy is exactly once. Everything
+else was automated:
+
+- Turning sharing on also turns the shield on (previously a second step).
+- The proxy re-binds on every network change, so new Wi-Fi and reboots recover.
+- `BootReceiver` restarts the shield when sharing is on even if "start with
+  boot" is off, so a reboot no longer silently ends sharing.
+- Back leaves the activity alive (TaskStackBuilder-style `moveTaskToBack`)
+  while sharing is on, instead of finishing and killing the proxy.
+- The service stops the proxy in `onDestroy`, so the UI can never claim
+  sharing while nothing listens.
 
 **Windows** (`set_windows_lan_sharing` in `main.rs`) binds a second DNS
 listener on the LAN address only — `0.0.0.0:53` would collide with the loopback
@@ -303,12 +318,11 @@ Answer given plainly, and the UI now states it:
   destination site terminating the account under its terms. Never use for
   banking, government, healthcare or anything needing recovery — this is now
   the in-app note on the email tab.
-- Burner **SMS is legal to receive**, but free numbers are shared and their
-  inboxes are public: anyone can read the codes, and numbers are recycled, so a
-  code may belong to a stranger's account. Using one to access an account you
-  do not own is unlawful. The SMS tab states the public-inbox and recycling
-  risk, says to use it only for accounts you own, and forbids banking,
-  payments, government, healthcare and persistent accounts.
-- Nothing in the feature automates the provider or evades a check, and no code
-  was added that would.
+- The **SMS number feature was removed** on request. Free numbers are shared and
+  their inboxes are public — anyone can read the codes — and numbers were
+  recycled, so a code could belong to a stranger's account, and logging into an
+  account you do not own is unlawful. `asms.ai` scraping, the two bridge
+  methods, the two Kotlin fetchers, the two Rust commands, the tab, and every
+  reference in README, the website and this file are gone. Burner is email only.
+- Nothing in the remaining feature automates a provider or evades a check.
 

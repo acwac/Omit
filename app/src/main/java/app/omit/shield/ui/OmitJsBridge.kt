@@ -364,42 +364,8 @@ class OmitJsBridge(
     }
 
     @JavascriptInterface
-    fun fetchBurnerSmsNumbersAsync() {
-        bgPool.execute {
-            val arr = app.omit.shield.net.BurnerManager.fetchSmsNumbers()
-            val payload = JSONObject().put("type", "smsNumbers").put("numbers", arr).toString()
-            val escaped = JSONObject.quote(payload)
-            activity.runOnUiThread {
-                activity.evalJs("window.__onBurnerData && window.__onBurnerData($escaped)")
-            }
-        }
-    }
-
-    @JavascriptInterface
-    fun fetchBurnerSmsMessagesAsync(digits: String) {
-        bgPool.execute {
-            val arr = app.omit.shield.net.BurnerManager.fetchSmsMessages(digits)
-            val payload = JSONObject().put("type", "smsMessages").put("digits", digits).put("messages", arr).toString()
-            val escaped = JSONObject.quote(payload)
-            activity.runOnUiThread {
-                activity.evalJs("window.__onBurnerData && window.__onBurnerData($escaped)")
-            }
-        }
-    }
-
-    @JavascriptInterface
     fun getBurnerInboxJson(): String {
         return app.omit.shield.net.BurnerManager.fetchEmailInbox(activity).toString()
-    }
-
-    @JavascriptInterface
-    fun getBurnerSmsNumbersJson(): String {
-        return app.omit.shield.net.BurnerManager.fetchSmsNumbers().toString()
-    }
-
-    @JavascriptInterface
-    fun getBurnerSmsMessagesJson(digits: String): String {
-        return app.omit.shield.net.BurnerManager.fetchSmsMessages(digits).toString()
     }
 
     /** Returns true only when the proxy actually bound a port. */
@@ -415,6 +381,13 @@ class OmitJsBridge(
         app.omit.shield.net.HomeShieldServer.stop()
         OmitPrefs.setHomeShieldEnabled(false)
         return true
+    }
+
+    /** False when there is no Wi-Fi address other devices could reach. */
+    @JavascriptInterface
+    fun hasLanAddress(): Boolean {
+        val ip = app.omit.shield.net.HomeShieldServer.getLanIp()
+        return ip.isNotEmpty() && ip != "127.0.0.1"
     }
 
     @JavascriptInterface

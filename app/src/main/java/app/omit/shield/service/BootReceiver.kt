@@ -12,7 +12,11 @@ class BootReceiver : BroadcastReceiver() {
         val act = intent?.action ?: return
         if (act == Intent.ACTION_BOOT_COMPLETED || act == Intent.ACTION_MY_PACKAGE_REPLACED) {
             OmitPrefs.init(context)
-            if (OmitPrefs.startOnBoot && OmitPrefs.desiredEnabled && VpnService.prepare(context) == null) {
+            // Sharing is a promise to other devices on the network, so it comes
+            // back after a reboot even when "start with boot" is off.
+            val shouldRestart = OmitPrefs.homeShieldEnabled ||
+                (OmitPrefs.startOnBoot && OmitPrefs.desiredEnabled)
+            if (shouldRestart && VpnService.prepare(context) == null) {
                 try {
                     val svc = Intent(context, OmitVpnService::class.java).apply {
                         action = OmitVpnService.ACTION_START

@@ -272,7 +272,13 @@ class MainActivity : Activity() {
         try {
             wv.evaluateJavascript("(function(){ var f = window.__omitHandleBack; return !!(f && f()); })()") { result ->
                 if (result != "true") {
-                    finish()
+                    // Sharing is served by this app. Backgrounding it is fine, but
+                    // leaving entirely would silently stop filtering every device.
+                    if (OmitPrefs.homeShieldEnabled) {
+                        moveTaskToBack(true)
+                    } else {
+                        finish()
+                    }
                 }
             }
         } catch (_: Throwable) {

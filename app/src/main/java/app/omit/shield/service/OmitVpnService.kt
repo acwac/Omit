@@ -242,6 +242,9 @@ class OmitVpnService : VpnService() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(pauseTicker)
         unregisterNetworkMonitor()
+        // Sockets must not outlive the service, or the UI would show sharing on
+        // while nothing is listening.
+        app.omit.shield.net.HomeShieldServer.stop()
         stopVpnTunnel()
         queryPool.shutdownNow()
         resolverPool.shutdownNow()
@@ -253,6 +256,17 @@ class OmitVpnService : VpnService() {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
             OmitPrefs.updatePrivateDnsWarning(detectStrictPrivateDnsHost(this))
             val cb = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    // Sharing binds the LAN address, so a new network invalidates
+                    // it. Rebinding here keeps it working with no user action.
+                    if (OmitPrefs.homeShieldEnabled) {
+                        app.omit.shield.net.HomeShieldServer.stop()
+                        // Keep the preference on across a failed rebind: the next
+                        // network event retries, and the port may simply be busy.
+                        app.omit.shield.net.HomeShieldServer.start()
+                    }
+                }
+
                 override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         val host = linkProperties.privateDnsServerName?.takeIf { it.isNotBlank() }

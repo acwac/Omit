@@ -80,11 +80,7 @@ export interface NativeBridge {
   copyToClipboard?(text: string): void;
   getBurnerEmailJson?(forceNew: boolean): string;
   fetchBurnerEmailAsync?(forceNew: boolean): void;
-  fetchBurnerSmsNumbersAsync?(): void;
-  fetchBurnerSmsMessagesAsync?(digits: string): void;
   getBurnerInboxJson?(): string;
-  getBurnerSmsNumbersJson?(): string;
-  getBurnerSmsMessagesJson?(digits: string): string;
   setHomeShieldEnabled?(enabled: boolean): boolean;
   getHomeShieldInfoJson?(): string;
   getTamperWarning?(): string;
@@ -298,18 +294,6 @@ export interface BurnerEmailMsg {
   otp: string;
 }
 
-export interface BurnerSmsNum {
-  digits: string;
-  formatted: string;
-}
-
-export interface BurnerSmsMsg {
-  from: string;
-  text: string;
-  time: string;
-  otp: string;
-}
-
 export interface HomeShieldInfo {
   enabled: boolean;
   lanIp: string;
@@ -337,26 +321,6 @@ export function nativeGetBurnerInbox(): BurnerEmailMsg[] {
   return [];
 }
 
-export function nativeGetBurnerSmsNumbers(): BurnerSmsNum[] {
-  try {
-    const raw = androidBridge()?.getBurnerSmsNumbersJson?.();
-    if (raw) return JSON.parse(raw) as BurnerSmsNum[];
-  } catch {
-    /* ignore */
-  }
-  return [];
-}
-
-export function nativeGetBurnerSmsMessages(digits: string): BurnerSmsMsg[] {
-  try {
-    const raw = androidBridge()?.getBurnerSmsMessagesJson?.(digits);
-    if (raw) return JSON.parse(raw) as BurnerSmsMsg[];
-  } catch {
-    /* ignore */
-  }
-  return [];
-}
-
 export function nativeSetHomeShield(enabled: boolean): boolean {
   const bridge = androidBridge();
   if (!bridge?.setHomeShieldEnabled) return false;
@@ -365,6 +329,22 @@ export function nativeSetHomeShield(enabled: boolean): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * True when this phone has a LAN address that other devices could reach.
+ * Sharing cannot work on mobile data or with Wi-Fi off.
+ */
+export function nativeHasLanAddress(): boolean {
+  try {
+    const bridge = androidBridge() as
+      | (ReturnType<typeof androidBridge> & { hasLanAddress?: () => boolean })
+      | undefined;
+    if (bridge?.hasLanAddress) return bridge.hasLanAddress();
+  } catch {
+    /* ignore */
+  }
+  return true;
 }
 
 export function nativeGetHomeShieldInfo(): HomeShieldInfo {

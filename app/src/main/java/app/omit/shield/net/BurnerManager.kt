@@ -10,7 +10,6 @@ import java.util.UUID
 object BurnerManager {
     private const val PREF = "omit_burner_prefs"
     private val OTP_REGEX = Regex("\\b\\d{4,8}\\b")
-    private val NUM_REGEX = Regex("/number/(\\d{9,15})/?")
 
     private fun httpGet(url: String, bearer: String? = null): String {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -113,43 +112,6 @@ object BurnerManager {
                         .put("intro", intro)
                         .put("otp", otp))
                 }
-            }
-        } catch (_: Throwable) {}
-        return out
-    }
-
-    fun fetchSmsNumbers(): JSONArray {
-        val out = JSONArray()
-        val seen = HashSet<String>()
-        for (path in listOf("https://anonymsms.com/", "https://anonymsms.com/united-states/", "https://anonymsms.com/united-kingdom/")) {
-            try {
-                val html = httpGet(path)
-                for (m in NUM_REGEX.findAll(html)) {
-                    val digits = m.groupValues[1]
-                    if (seen.add(digits)) {
-                        out.put(JSONObject().put("digits", digits).put("formatted", "+$digits"))
-                        if (out.length() >= 15) return out
-                    }
-                }
-            } catch (_: Throwable) {}
-        }
-        return out
-    }
-
-    fun fetchSmsMessages(digits: String): JSONArray {
-        val out = JSONArray()
-        try {
-            val html = httpGet("https://anonymsms.com/number/$digits/").replace("\\\"", "\"")
-            val msgRegex = Regex("\"from\"\\s*:\\s*\"([^\"]*)\"[^}]*?\"text\"\\s*:\\s*\"([^\"]*)\"[^}]*?\"receivedAt\"\\s*:\\s*\"([^\"]*)\"")
-            for (m in msgRegex.findAll(html)) {
-                val text = m.groupValues[2]
-                val otp = OTP_REGEX.find(text)?.value ?: ""
-                out.put(JSONObject()
-                    .put("from", m.groupValues[1])
-                    .put("text", text)
-                    .put("time", m.groupValues[3])
-                    .put("otp", otp))
-                if (out.length() >= 20) break
             }
         } catch (_: Throwable) {}
         return out

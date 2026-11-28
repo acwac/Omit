@@ -13,10 +13,9 @@ import {
   isWindowsRuntime,
   nativeGetBurnerEmail,
   nativeGetBurnerInbox,
-  nativeGetBurnerSmsMessages,
-  nativeGetBurnerSmsNumbers,
   nativeGetHomeShieldInfo,
   nativeGetTamperWarning,
+  nativeHasLanAddress,
   nativeSetHomeShield,
   nativeVersionCode,
   openExternalUrl,
@@ -43,8 +42,6 @@ import {
   windowsStats,
   type AppMode,
   type BurnerEmailMsg,
-  type BurnerSmsMsg,
-  type BurnerSmsNum,
   type DnsLogItem,
   type HomeShieldInfo,
   type WindowsLanInfo,
@@ -632,6 +629,11 @@ export default function App() {
     };
   }, [windows]);
 
+  // Used by Wi-Fi sharing, which cannot filter anything unless the shield is on.
+  const requestShieldOn = () => {
+    if (state.shield !== "protected") handleShieldAction("protected");
+  };
+
   const toggleDark = () => {
     const next = !state.dark;
     setState((cur) => ({ ...cur, dark: next }));
@@ -1033,7 +1035,13 @@ export default function App() {
                 }
               }}
             />
-            {!windows && <HomeShieldCard onToast={setToast} shieldOn={state.shield === "protected"} />}
+            {!windows && (
+              <HomeShieldCard
+                onToast={setToast}
+                shieldOn={state.shield === "protected"}
+                onRequestShield={requestShieldOn}
+              />
+            )}
             {windows && <WindowsStatusCard onToast={setToast} />}
           </>
         )}
@@ -1901,7 +1909,15 @@ function Home({
   );
 }
 
-function HomeShieldCard({ onToast, shieldOn }: { onToast: (msg: string) => void; shieldOn: boolean }) {
+function HomeShieldCard({
+  onToast,
+  shieldOn,
+  onRequestShield,
+}: {
+  onToast: (msg: string) => void;
+  shieldOn: boolean;
+  onRequestShield: () => void;
+}) {
   const initial = nativeGetHomeShieldInfo();
   const [homeOn, setHomeOn] = useState<boolean>(initial.enabled);
   const [homeInfo, setHomeInfo] = useState<HomeShieldInfo>(initial);
@@ -1914,6 +1930,18 @@ function HomeShieldCard({ onToast, shieldOn }: { onToast: (msg: string) => void;
 
   const toggleHomeShield = () => {
     const next = !homeOn;
+    if (next) {
+      // The proxy answers on this phone's LAN address, so it can only work if
+      // this phone is reachable. Missing network access is the one thing the
+      // user still has to grant, once.
+      if (!nativeHasLanAddress()) {
+        onToast("Join a Wi-Fi network first — other devices need to reach this phone");
+        return;
+      }
+      // Sharing is filtered by the on-device engine. Turning it on turns the
+      // shield on too, so there is no second step to forget.
+      if (!shieldOn) onRequestShield();
+    }
     const ok = nativeSetHomeShield(next);
     const info = nativeGetHomeShieldInfo();
     if (next && !ok) {
@@ -1925,14 +1953,11 @@ function HomeShieldCard({ onToast, shieldOn }: { onToast: (msg: string) => void;
     }
     setHomeOn(next);
     setHomeInfo(info);
-    onToast(next ? "Wi-Fi proxy on" : "Wi-Fi proxy off");
+    onToast(next ? "Sharing this Wi-Fi, and the shield is on" : "Wi-Fi sharing off");
   };
 
   const autoUrl = homeInfo.port ? `http://${homeInfo.lanIp}:${homeInfo.port}/omit.pac` : "";
   const manualProxy = homeInfo.port ? `${homeInfo.lanIp}:${homeInfo.port}` : "";
-  // The proxy filters through the on-device engine, which only runs while the
-  // VPN is up. Without it devices would browse unfiltered through the phone.
-  const needsShield = !shieldOn;
 
   return (
     <section className="section">
@@ -1979,19 +2004,13 @@ function HomeShieldCard({ onToast, shieldOn }: { onToast: (msg: string) => void;
               </button>
             </div>
             <div className="home-shield-note">
-              On the other device, open Wi-Fi settings → this network → Proxy → Manual, and enter
-              the proxy address above (or the auto config URL). Both devices must be on the same
-              Wi-Fi, and this phone has to stay on while they browse.
+              Other devices are filtered through this phone. Each device needs this address once;
+              it is saved there, and the shield now comes back on its own after a reboot.
             </div>
 
             <div className="home-shield-note">
               {homeInfo.blockedCount} requests blocked from other devices
             </div>
-            {needsShield && (
-              <div className="home-shield-note warn">
-                Turn the shield on too — without it this proxy passes traffic unfiltered.
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -2199,17 +2218,11 @@ interface BurnerPayload {
   type?: string;
   email?: { address?: string; error?: string };
   inbox?: BurnerEmailMsg[];
-  numbers?: BurnerSmsNum[];
-  messages?: BurnerSmsMsg[];
 }
 
 function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
-  const [burnerTab, setBurnerTab] = useState<"email" | "sms">("email");
   const [emailAddr, setEmailAddr] = useState<string>("");
   const [emailMsgs, setEmailMsgs] = useState<BurnerEmailMsg[]>([]);
-  const [smsNums, setSmsNums] = useState<BurnerSmsNum[]>([]);
-  const [smsIdx, setSmsIdx] = useState<number>(0);
-  const [smsMsgs, setSmsMsgs] = useState<BurnerSmsMsg[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
   const onToastRef = useRef(onToast);
@@ -2231,17 +2244,6 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
           else if (data.email?.error) onToastRef.current(data.email.error);
           if (Array.isArray(data.inbox)) setEmailMsgs(data.inbox);
           setLoading(false);
-        } else if (data.type === "smsNumbers") {
-          if (Array.isArray(data.numbers) && data.numbers.length) {
-            setSmsNums(data.numbers);
-            const current = data.numbers[smsIdx % data.numbers.length];
-            androidBridge()?.fetchBurnerSmsMessagesAsync?.(current.digits);
-          } else {
-            setLoading(false);
-          }
-        } else if (data.type === "smsMessages") {
-          if (Array.isArray(data.messages)) setSmsMsgs(data.messages);
-          setLoading(false);
         }
       } catch {
         setLoading(false);
@@ -2251,7 +2253,7 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
     return () => {
       delete (window as unknown as { __onBurnerData?: (raw: string) => void }).__onBurnerData;
     };
-  }, [smsIdx]);
+  }, []);
 
   // Windows talks to the same providers through Rust commands (no CORS, and the
   // API keys stay out of the webview). Android uses its JavascriptInterface.
@@ -2291,193 +2293,55 @@ function BurnerScreen({ onToast }: { onToast: (msg: string) => void }) {
     }, 20);
   };
 
-  const loadSms = (idx = smsIdx) => {
-    const bridge = androidBridge();
-    setLoading(true);
-    if (invoke) {
-      void (async () => {
-        try {
-          let numbers = smsNums;
-          if (!numbers.length) {
-            const fetched = await invoke<BurnerSmsNum[]>("get_burner_sms_numbers");
-            if (Array.isArray(fetched)) numbers = fetched;
-            if (numbers.length) setSmsNums(numbers);
-          }
-          if (numbers.length) {
-            const current = numbers[idx % numbers.length];
-            const messages = await invoke<BurnerSmsMsg[]>("get_burner_sms_messages", {
-              digits: current.digits,
-            });
-            if (Array.isArray(messages)) setSmsMsgs(messages);
-          } else {
-            onToastRef.current("Could not load SMS numbers");
-          }
-        } catch {
-          onToastRef.current("Could not reach the SMS provider");
-        } finally {
-          setLoading(false);
-        }
-      })();
-      return;
-    }
-    if (smsNums.length && bridge?.fetchBurnerSmsMessagesAsync) {
-      const current = smsNums[idx % smsNums.length];
-      bridge.fetchBurnerSmsMessagesAsync(current.digits);
-      return;
-    }
-    if (bridge?.fetchBurnerSmsNumbersAsync) {
-      bridge.fetchBurnerSmsNumbersAsync();
-      return;
-    }
-    window.setTimeout(() => {
-      const nums = smsNums.length ? smsNums : nativeGetBurnerSmsNumbers();
-      if (nums.length) {
-        setSmsNums(nums);
-        const current = nums[idx % nums.length];
-        setSmsMsgs(nativeGetBurnerSmsMessages(current.digits));
-      } else {
-        onToast("Could not load SMS numbers");
-      }
-      setLoading(false);
-    }, 20);
-  };
-
-  const burnerTabRef = useRef(burnerTab);
-  burnerTabRef.current = burnerTab;
-  const smsIdxRef = useRef(smsIdx);
-  smsIdxRef.current = smsIdx;
-
   useEffect(() => {
     // Windows reads the same providers directly over HTTPS (CSP allows them).
     if (!isAndroidRuntime() && !isWindowsRuntime()) return;
-    if (burnerTab === "email" && !emailAddr) loadEmail(false);
-    if (burnerTab === "sms" && smsNums.length === 0) loadSms(0);
-    const timer = window.setInterval(() => {
-      if (burnerTabRef.current === "email") loadEmail(false);
-      else loadSms(smsIdxRef.current);
-    }, 6000);
+    if (!emailAddr) loadEmail(false);
+    const timer = window.setInterval(() => loadEmail(false), 6000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [burnerTab]);
-
-  const activeNumber = smsNums.length ? smsNums[smsIdx % smsNums.length] : null;
+  }, []);
 
   return (
     <div className="page">
-      <Header title="Burner" subtitle="Disposable email & SMS OTPs." />
+      <Header title="Burner" subtitle="Disposable email inbox." />
 
-      <div className="seg-tabs">
-        <button
-          type="button"
-          className={`seg-tab ${burnerTab === "email" ? "active" : ""}`}
-          onClick={() => setBurnerTab("email")}
-        >
-          Burner Email
-        </button>
-        <button
-          type="button"
-          className={`seg-tab ${burnerTab === "sms" ? "active" : ""}`}
-          onClick={() => setBurnerTab("sms")}
-        >
-          Burner Number
-        </button>
-      </div>
-
-      {burnerTab === "email" ? (
-        <section className="panel burner-panel">
-          <div className="burner-head">
-            <div className="burner-address">
-              {loading && !emailAddr ? "Generating inbox..." : emailAddr || "Tap New Address to generate"}
-            </div>
-            <div className="burner-actions">
-              {emailAddr && (
-                <button type="button" className="pill-btn" onClick={() => copyText(emailAddr, "Email")}>
-                  Copy Email
-                </button>
-              )}
-              <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>
-                {loading ? <span className="omit-spinner" /> : "Refresh"}
+      <section className="panel burner-panel">
+        <div className="burner-head">
+          <div className="burner-address">
+            {loading && !emailAddr ? "Generating inbox..." : emailAddr || "Tap New Address to generate"}
+          </div>
+          <div className="burner-actions">
+            {emailAddr && (
+              <button type="button" className="pill-btn" onClick={() => copyText(emailAddr, "Email")}>
+                Copy Email
               </button>
-              <button type="button" className="pill-btn" onClick={() => loadEmail(true)}>
-                New Address
+            )}
+            <button type="button" className="pill-btn" onClick={() => loadEmail(false)}>
+              {loading ? <span className="omit-spinner" /> : "Refresh"}
+            </button>
+            <button type="button" className="pill-btn" onClick={() => loadEmail(true)}>
+              New Address
+            </button>
+          </div>
+        </div>
+        <div className="burner-note">
+          Disposable addresses are legal, but the inbox is public and can vanish. Never use one
+          for banking, government, healthcare, work, or any account you need to recover.
+        </div>
+        {emailMsgs.length === 0 && <div className="burner-empty">No emails yet. Tap Refresh to check inbox.</div>}
+        {emailMsgs.map((m) => (
+          <div key={m.id || `${m.subject}-${m.from}`} className="burner-item">
+            <strong>{m.subject || m.from}</strong>
+            <span>{m.intro}</span>
+            {m.otp && (
+              <button type="button" className="pill-btn" onClick={() => copyText(m.otp, "OTP")}>
+                Copy OTP: {m.otp}
               </button>
-            </div>
+            )}
           </div>
-          <div className="burner-note">
-            Disposable addresses are legal, but the inbox is public and can vanish. Never use one
-            for banking, government, healthcare, work, or any account you need to recover.
-          </div>
-          {emailMsgs.length === 0 && <div className="burner-empty">No emails yet. Tap Refresh to check inbox.</div>}
-          {emailMsgs.map((m) => (
-            <div key={m.id || `${m.subject}-${m.from}`} className="burner-item">
-              <strong>{m.subject || m.from}</strong>
-              <span>{m.intro}</span>
-              {m.otp && (
-                <button type="button" className="pill-btn" onClick={() => copyText(m.otp, "OTP")}>
-                  Copy OTP: {m.otp}
-                </button>
-              )}
-            </div>
-          ))}
-        </section>
-      ) : (
-        <section className="panel burner-panel">
-          <div className="burner-head">
-            <div className="burner-address">
-              {loading && smsNums.length === 0
-                ? "Loading live number..."
-                : activeNumber?.formatted || "Tap Refresh to load"}
-            </div>
-            <div className="burner-actions">
-              {activeNumber && (
-                <>
-                  <button
-                    type="button"
-                    className="pill-btn"
-                    onClick={() => copyText(activeNumber.formatted, "Number")}
-                  >
-                    Copy Number
-                  </button>
-                  <button
-                    type="button"
-                    className="pill-btn"
-                    onClick={() => {
-                      const next = smsIdx + 1;
-                      setSmsIdx(next);
-                      loadSms(next);
-                    }}
-                  >
-                    Switch Number
-                  </button>
-                </>
-              )}
-              <button type="button" className="pill-btn" onClick={() => loadSms(smsIdx)}>
-                {loading ? <span className="omit-spinner" /> : "Refresh"}
-              </button>
-            </div>
-          </div>
-          <div className="burner-note">
-            This number is shared and its inbox is public: anyone can read the codes sent to it, and
-            numbers get recycled. Only use it for accounts you own. Never use it for banking, payments,
-            government, healthcare, or anything you need to keep — and never to sign into an account
-            that is not yours. Doing that is illegal.
-          </div>
-          {smsMsgs.length === 0 && <div className="burner-empty">No SMS yet. Tap Refresh to check.</div>}
-          {smsMsgs.map((m, i) => (
-            <div key={`${m.from}-${m.time}-${i}`} className="burner-item">
-              <strong>
-                {m.from} · {m.time}
-              </strong>
-              <span>{m.text}</span>
-              {m.otp && (
-                <button type="button" className="pill-btn" onClick={() => copyText(m.otp, "Code")}>
-                  Copy Code: {m.otp}
-                </button>
-              )}
-            </div>
-          ))}
-        </section>
-      )}
+        ))}
+      </section>
     </div>
   );
 }

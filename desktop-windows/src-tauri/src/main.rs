@@ -1490,7 +1490,7 @@ fn get_windows_lan_info() -> serde_json::Value {
 }
 
 // ---------------------------------------------------------------------------
-// Burner email / SMS (same providers as the Android BurnerManager)
+// Burner email (same providers as the Android BurnerManager)
 // ---------------------------------------------------------------------------
 
 fn burner_path() -> Option<PathBuf> {
@@ -1718,111 +1718,6 @@ fn burner_inbox() -> Vec<serde_json::Value> {
     out
 }
 
-/// Scrapes anonymsms.com the same way BurnerManager does: /number/<digits>.
-fn burner_sms_numbers() -> Vec<serde_json::Value> {
-    let mut out: Vec<serde_json::Value> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for url in [
-        "https://anonymsms.com/",
-        "https://anonymsms.com/united-states/",
-        "https://anonymsms.com/united-kingdom/",
-    ] {
-        let Ok(html) = http_get(url, None) else {
-            continue;
-        };
-        for digits in scrape_number_paths(&html) {
-            if seen.insert(digits.clone()) {
-                out.push(serde_json::json!({ "digits": digits, "formatted": format!("+{digits}") }));
-                if out.len() >= 15 {
-                    return out;
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Finds every `/number/<9..15 digits>/` occurrence in a page.
-fn scrape_number_paths(html: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let marker = "/number/";
-    let mut rest = html;
-    while let Some(pos) = rest.find(marker) {
-        let tail = &rest[pos + marker.len()..];
-        let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if (9..=15).contains(&digits.len()) {
-            out.push(digits);
-        }
-        rest = tail;
-    }
-    out
-}
-
-fn burner_sms_messages(digits: &str) -> Vec<serde_json::Value> {
-    let digits: String = digits.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.len() < 9 || digits.len() > 15 {
-        return Vec::new();
-    }
-    let Ok(html) = http_get(&format!("https://anonymsms.com/number/{digits}/"), None) else {
-        return Vec::new();
-    };
-    let html = html.replace("\\\"", "\"");
-    let mut out: Vec<serde_json::Value> = Vec::new();
-    // Messages are embedded as {"from": "...", "text": "...", "receivedAt": "..."}.
-    let mut rest = html.as_str();
-    while let Some(pos) = rest.find("\"from\"") {
-        let window = &rest[pos..(pos + 600).min(rest.len())];
-        rest = &rest[pos + 6..];
-        let from = json_field(window, "from");
-        let text = json_field(window, "text");
-        let at = json_field(window, "receivedAt");
-        if text.is_empty() {
-            continue;
-        }
-        out.push(serde_json::json!({
-            "from": from, "text": text, "time": at, "otp": extract_otp(&text),
-        }));
-        if out.len() >= 20 {
-            break;
-        }
-    }
-    out
-}
-
-/// Extracts "key": "value" (or a number) from a JSON-ish fragment.
-fn json_field(fragment: &str, key: &str) -> String {
-    let marker = format!("\"{key}\"");
-    let Some(pos) = fragment.find(&marker) else {
-        return String::new();
-    };
-    let tail = &fragment[pos + marker.len()..];
-    let Some(colon) = tail.find(':') else {
-        return String::new();
-    };
-    let value = tail[colon + 1..].trim_start();
-    if let Some(stripped) = value.strip_prefix('"') {
-        let mut out = String::new();
-        let mut chars = stripped.chars();
-        while let Some(ch) = chars.next() {
-            if ch == '\\' {
-                if let Some(next) = chars.next() {
-                    out.push(next);
-                }
-            } else if ch == '"' {
-                break;
-            } else {
-                out.push(ch);
-            }
-        }
-        out
-    } else {
-        value
-            .chars()
-            .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == ':')
-            .collect()
-    }
-}
-
 #[tauri::command]
 fn get_burner_email(force_new: bool) -> serde_json::Value {
     burner_email(force_new)
@@ -1833,15 +1728,7 @@ fn get_burner_inbox() -> Vec<serde_json::Value> {
     burner_inbox()
 }
 
-#[tauri::command]
-fn get_burner_sms_numbers() -> Vec<serde_json::Value> {
-    burner_sms_numbers()
-}
 
-#[tauri::command]
-fn get_burner_sms_messages(digits: String) -> Vec<serde_json::Value> {
-    burner_sms_messages(&digits)
-}
 
 /// The whole UI state, mirroring Android's getStateJson so the shared screens
 /// are driven by real values on both platforms.
@@ -2090,8 +1977,6 @@ fn main() {
             get_windows_recent_blocked,
             get_burner_email,
             get_burner_inbox,
-            get_burner_sms_numbers,
-            get_burner_sms_messages,
             download_and_install_update,
             set_windows_theme
         ])
