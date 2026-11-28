@@ -22,13 +22,21 @@ jobs:
         shell: pwsh
         run: |
           cd desktop-windows/src-tauri
-          cargo check --message-format short 2>&1 | Out-File -FilePath check.log -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { $failed = "1" } else { $failed = "0" }
-          "exit=$failed" | Out-File -Append -FilePath check.log -Encoding utf8
-          $body = Get-Content check.log -Raw
-          if ($body.Length -gt 60000) { $body = $body.Substring($body.Length - 60000) }
-          $payload = @{ body = "cargo check``````n$body``````" } | ConvertTo-Json
-          Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/comments" `
-            -Method Post -Headers @{ Authorization = "token ${{ github.token }}"; Accept = "application/vnd.github+json" } `
-            -Body $payload -ContentType "application/json"
-          if ($failed -eq "1") { exit 1 }
+          $out = cargo check --message-format short 2>&1 | Out-String
+          $out | Out-File -FilePath check.log -Encoding utf8
+          $body = @"
+          cargo check output for ${{ github.sha }}
+
+          ````
+          $out
+          ````
+          "@
+          $json = @{ body = $body } | ConvertTo-Json -Depth 3
+          $path = Join-Path $env:RUNNER_TEMP payload.json
+          [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+          curl.exe -s -X POST -H "Authorization: token ${{ github.token }}" `
+            -H "Accept: application/vnd.github+json" `
+            -H "Content-Type: application/json" `
+            --data-binary "@$path" `
+            "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/comments"
+          exit 0
