@@ -5,7 +5,7 @@
   "releasedAt": "2026-11-28",
   "androidApkUrl": "https://acwac.github.io/Omit/downloads/Omit.apk",
   "otaUrl": "https://acwac.github.io/Omit/downloads/ota-ui.zip",
-  "otaSha256": "5d0322771b44e480fcc07c5d25b894828314cbde50fdce388d484be447a3752e",
+  "otaSha256": "19af767bba2dcd4dd42ddd2de20a7341d29033473717cb15d5a3c704ae30ca2b",
   "otaCode": 250,
   "windowsExeUrl": "https://acwac.github.io/Omit/downloads/Omit-Windows.exe",
   "notes": "Omit 2.5.0: full rebrand from Vellum, Android TV layout polish, Windows desktop fixes, faster encrypted DNS with automatic recovery, and a smarter in-app updater."
