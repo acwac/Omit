@@ -34,9 +34,12 @@ jobs:
           $json = @{ body = $body } | ConvertTo-Json -Depth 3
           $path = Join-Path $env:RUNNER_TEMP payload.json
           [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
-          curl.exe -s -X POST -H "Authorization: token ${{ github.token }}" `
+          curl.exe -s -o response.txt -w "%{http_code}" -X POST -H "Authorization: token ${{ github.token }}" `
             -H "Accept: application/vnd.github+json" `
             -H "Content-Type: application/json" `
             --data-binary "@$path" `
             "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/comments"
+          Write-Output ""
+          Write-Output "--- response ---"
+          Get-Content response.txt
           exit 0
