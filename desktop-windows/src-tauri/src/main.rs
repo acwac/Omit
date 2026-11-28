@@ -662,7 +662,7 @@ fn set_windows_categories(mask: Option<u8>, toggle_index: Option<u8>) -> u8 {
         (Some(mask), _) => mask,
         (None, Some(index)) if index < 8 => current ^ (1u8 << index),
         _ => current,
-    };
+    } & MASK_STRICT;
     ACTIVE_MASK.store(next as u64, Ordering::Relaxed);
     next
 }
