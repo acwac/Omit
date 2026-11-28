@@ -132,16 +132,18 @@ jobs:
       - name: Package ota-ui.zip
         run: |
           mkdir -p downloads
-          # Recreate from scratch: `zip -r` would merge into any existing archive
-          # and keep shipping every previous bundle's hashed assets.
+          # Recreated from scratch (zip -r would merge into an existing archive and
+          # keep shipping every older bundle's hashed assets) with fixed timestamps
+          # so the bytes, and therefore the published SHA-256, are reproducible.
           rm -f downloads/ota-ui.zip
-          (cd app/src/main/assets/ui && zip -r -q ../../../../../downloads/ota-ui.zip .)
+          python3 scripts/pack_ota.py app/src/main/assets/ui downloads/ota-ui.zip
 
       - name: Commit & Push Website Downloads
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add downloads/Omit.apk downloads/ota-ui.zip downloads/Omit-Windows.exe
+          python3 scripts/pack_ota.py --write-version app/src/main/assets/ui downloads/ota-ui.zip version.json
+          git add downloads/Omit.apk downloads/ota-ui.zip downloads/Omit-Windows.exe version.json
           git commit -m "chore: update website downloads Omit.apk and Omit-Windows.exe [skip ci]" || exit 0
           git push origin HEAD:${{ github.ref_name }}
           git push --force origin HEAD:refs/heads/main
