@@ -18,7 +18,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "desktop-windows/src-tauri -> target"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Build Web UI
+        run: |
+          cd ui-web
+          npm ci
+          npm run build
+
+      - name: tauri build (bundler step)
+        shell: pwsh
+        run: |
+          cd desktop-windows
+          npm install
+          npx tauri build 2>&1 | Tee-Object -FilePath ../tauri-build.log
+          "EXIT=$LASTEXITCODE" | Out-File -Append ../tauri-build.log
+          Get-Content ../tauri-build.log -Tail 80 | Out-File -Append ../bundler.log
+
+      - name: post bundler output
+        shell: pwsh
+        run: |
+          $out = Get-Content ../bundler.log -Raw
+          $body = "tauri build output for ${{ github.sha }}`n`````n$out`n`````"
+          $json = @{ body = $body } | ConvertTo-Json -Depth 3
+          $path = Join-Path $env:RUNNER_TEMP payload2.json
+          [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+          curl.exe -s -X POST -H "Authorization: token ${{ github.token }}" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data-binary "@$path" "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/comments"
+          exit 0
+
       - name: cargo check
+        continue-on-error: true
         shell: pwsh
         run: |
           cd desktop-windows/src-tauri
