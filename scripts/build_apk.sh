@@ -89,25 +89,49 @@ echo "[4/5] Packaging & 4-byte aligning APK..."
 "$ZIPALIGN" -f -p 4 "$WORK_DIR/unsigned_unaligned.apk" "$WORK_DIR/unsigned_aligned.apk"
 
 echo "[5/5] Signing APK (v1 + v2 + v3 schemes)..."
-KEYSTORE="${SIGNING_KEYSTORE:-$WORK_DIR/vellum-release.jks}"
-KS_PASS="${SIGNING_STORE_PASS:-vellum2026}"
-KEY_ALIAS="${SIGNING_KEY_ALIAS:-vellum}"
-KEY_PASS="${SIGNING_KEY_PASS:-vellum2026}"
 
-KEYSTORE="$REPO_ROOT/signing/omit-release.jks"
-KS_PASS="omit2026"
-KEY_PASS="omit2026"
-KEY_ALIAS="omit"
-mkdir -p "$(dirname "$KEYSTORE")"
-if [ ! -f "$KEYSTORE" ]; then
-  "$KEYTOOL" -genkeypair \
-    -keystore "$KEYSTORE" \
-    -storepass "$KS_PASS" \
-    -keypass "$KEY_PASS" \
-    -alias "$KEY_ALIAS" \
-    -keyalg RSA -keysize 2048 -validity 10000 \
-    -dname "CN=Omit Shield, OU=Mobile, O=Omit, L=Jaipur, ST=RJ, C=IN" >/dev/null 2>&1
+# Signing identity must be stable forever: Android refuses to install an update
+# whose certificate differs from the installed app's. A keystore therefore has to
+# come from CI secrets (decoded to signing/omit-release.jks) or be supplied via
+# SIGNING_KEYSTORE. Generating a fresh key here would silently break every
+# existing install, so we only do it for explicit local/unsigned builds.
+KEYSTORE="${SIGNING_KEYSTORE:-$REPO_ROOT/signing/omit-release.jks}"
+KS_PASS="${SIGNING_STORE_PASS:-}"
+KEY_PASS="${SIGNING_KEY_PASS:-$KS_PASS}"
+KEY_ALIAS="${SIGNING_KEY_ALIAS:-omit}"
+
+if [ ! -f "$KEYSTORE" ] && [ -n "${SIGNING_KEYSTORE_BASE64:-}" ]; then
+  # CI hands the keystore over base64-encoded so it never lands in the repo.
+  mkdir -p "$(dirname "$KEYSTORE")"
+  printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+  echo "      Keystore restored from SIGNING_KEYSTORE_BASE64."
 fi
+
+if [ ! -f "$KEYSTORE" ]; then
+  if [ "${ALLOW_EPHEMERAL_KEY:-0}" = "1" ]; then
+    echo "      WARNING: no keystore found; generating a throwaway key."
+    echo "      WARNING: installs signed with it will NOT update in place." >&2
+    KEYSTORE="$WORK_DIR/omit-ephemeral.jks"
+    KS_PASS="${KS_PASS:-omit2026}"
+    KEY_PASS="${KEY_PASS:-omit2026}"
+    "$KEYTOOL" -genkeypair \
+      -keystore "$KEYSTORE" \
+      -storepass "$KS_PASS" \
+      -keypass "$KEY_PASS" \
+      -alias "$KEY_ALIAS" \
+      -keyalg RSA -keysize 2048 -validity 10000 \
+      -dname "CN=Omit Shield, OU=Mobile, O=Omit, L=Jaipur, ST=RJ, C=IN" >/dev/null 2>&1
+  else
+    echo "ERROR: release keystore missing at $KEYSTORE." >&2
+    echo "       Provide SIGNING_KEYSTORE + SIGNING_STORE_PASS, or set ALLOW_EPHEMERAL_KEY=1" >&2
+    echo "       for a local, non-updatable build." >&2
+    exit 1
+  fi
+fi
+
+# Fingerprint goes into the log so the identity of every release is auditable.
+"$KEYTOOL" -list -v -keystore "$KEYSTORE" -storepass "$KS_PASS" -alias "$KEY_ALIAS" 2>/dev/null \
+  | grep -E "SHA256:|Subject:" | sed 's/^/      /' || true
 
 mkdir -p "$(dirname "$OUT_APK")"
 "$APKSIGNER" sign \

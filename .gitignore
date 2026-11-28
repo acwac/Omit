@@ -25,4 +25,7 @@ desktop-windows/node_modules/
 .DS_Store
 Thumbs.db
 *.swp
-!signing/omit-release.jks
+
+# Release keystores are injected from CI secrets, never committed
+signing/*.jks
+signing/*.keystore

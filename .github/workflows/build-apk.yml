@@ -54,9 +54,20 @@ jobs:
           npm run build
 
       - name: Build Omit APK
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           chmod +x scripts/build_apk.sh
           mkdir -p dist-release
+          # With no signing secrets configured this stays a throwaway key, which is
+          # fine for pull-request builds but must never publish.
+          if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
+            export ALLOW_EPHEMERAL_KEY=1
+            echo "::warning title=Unsigned identity::No ANDROID_KEYSTORE_BASE64 secret; APK is signed with a throwaway key and will not update in place."
+          fi
           ANDROID_SDK_ROOT="$ANDROID_HOME" KOTLIN_HOME="/opt/kotlin" ./scripts/build_apk.sh ./dist-release/Omit.apk
 
       - name: Upload Omit.apk Artifact
@@ -137,6 +148,22 @@ jobs:
           # so the bytes, and therefore the published SHA-256, are reproducible.
           rm -f downloads/ota-ui.zip
           python3 scripts/pack_ota.py app/src/main/assets/ui downloads/ota-ui.zip
+
+      - name: Verify signing identity
+        env:
+          EXPECTED_SHA256: ${{ secrets.RELEASE_CERT_SHA256 }}
+        run: |
+          CERT=$(unzip -p downloads/Omit.apk 'META-INF/*.RSA' 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)
+          echo "APK certificate SHA-256: ${CERT:-unknown}"
+          if [ -n "$EXPECTED_SHA256" ]; then
+            if [ "$CERT" != "$EXPECTED_SHA256" ]; then
+              echo "::error title=Signing identity changed::The APK certificate does not match RELEASE_CERT_SHA256. Existing installs could not update."
+              exit 1
+            fi
+            echo "Certificate matches the pinned release identity."
+          else
+            echo "::warning title=No pinned certificate::Set RELEASE_CERT_SHA256 to enforce a stable signing identity."
+          fi
 
       - name: Commit & Push Website Downloads
         run: |
