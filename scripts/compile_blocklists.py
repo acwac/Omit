@@ -216,6 +216,7 @@ def main():
                 return
         domain_masks[d] = domain_masks.get(d, 0) | cat
 
+    failed_sources = []
     for name, url, cat, cap in SOURCES:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 OmitCompiler/1.0"})
@@ -244,6 +245,7 @@ def main():
                         break
             print(f"[OK] {name}: +{blocks:,} rules ({allows:,} unbreak exceptions)")
         except Exception as e:
+            failed_sources.append(name)
             print(f"[WARN] {name} failed: {e}")
 
     for d in PURE_SHOPPING_AFFILIATE:
@@ -293,6 +295,41 @@ def main():
         f.write(bytes(m & 0xFF for _, m in sorted_items))
 
     print(f"Saved {out_path}: {count:,} root rules ({os.path.getsize(out_path) / 1024:.1f} KB)")
+
+    # A transient fetch failure silently shrinks the shipped table: one CI run
+    # produced 182,693 rules instead of 210,898 without anyone noticing. Compare
+    # against the table already committed so a degraded compile cannot ship.
+    previous = 0
+    if os.path.exists(out_path):
+        try:
+            with open(out_path, "rb") as f:
+                f.seek(8)
+                previous = abs(struct.unpack(">i", f.read(4))[0])
+        except Exception:
+            previous = 0
+
+    if failed_sources:
+        print(f"[WARN] {len(failed_sources)}/{len(SOURCES)} sources failed: " + ", ".join(failed_sources))
+
+    floor = int(os.environ.get("MIN_BLOCKLIST_RULES", "150000"))
+    problems = []
+    if count < floor:
+        problems.append(f"only {count:,} rules (minimum {floor:,})")
+    # Allow a little natural churn from list maintenance, not a lost source.
+    if previous and count < previous * 0.95:
+        problems.append(
+            f"{count:,} rules vs {previous:,} already shipped "
+            f"({count * 100 // max(previous, 1)}%)"
+        )
+    if problems:
+        detail = "; ".join(problems)
+        if os.environ.get("ALLOW_PARTIAL_BLOCKLIST") == "1":
+            print(f"[WARN] Degraded blocklist accepted: {detail}")
+        else:
+            print(f"[ERROR] Degraded blocklist: {detail}", file=sys.stderr)
+            print("        A smaller table weakens protection. Re-run the build, or set", file=sys.stderr)
+            print("        ALLOW_PARTIAL_BLOCKLIST=1 to accept it deliberately.", file=sys.stderr)
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
