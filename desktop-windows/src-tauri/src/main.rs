@@ -736,7 +736,8 @@ fn set_windows_theme(dark: bool, window: tauri::WebviewWindow) {
 
 struct AppState {
     table: Arc<BlockTable>,
-    rules: std::sync::Mutex<RuleSets>,
+    /// Shared with the DNS workers, so allow/block edits apply to the next query.
+    rules: Arc<std::sync::Mutex<RuleSets>>,
 }
 
 #[derive(Default)]
@@ -744,6 +745,7 @@ struct RuleSets {
     allow: std::collections::HashSet<String>,
     block: std::collections::HashSet<String>,
 }
+
 
 fn main() {
     let default_hook = std::panic::take_hook();
@@ -776,7 +778,7 @@ fn main() {
             );
             app.manage(AppState {
                 table,
-                rules: std::sync::Mutex::new(RuleSets::default()),
+                rules: Arc::new(std::sync::Mutex::new(RuleSets::default())),
             });
 
             // Carry the app icon when the bundle provides one so the tray entry is
@@ -817,7 +819,7 @@ fn main() {
             download_and_install_update,
             set_windows_theme
         ])
-        .on_window_event(|window, event| {
+        .on_window_event(|_window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 SHIELD_ACTIVE.store(false, Ordering::SeqCst);
                 stop_dns_sinkhole();
