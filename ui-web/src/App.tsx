@@ -567,7 +567,9 @@ export default function App() {
       setWindowsReady(true);
     };
     void tick();
-    const timer = window.setInterval(() => void tick(), 4000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void tick();
+    }, 4000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
@@ -591,7 +593,9 @@ export default function App() {
       }
     };
     void pull();
-    const timer = window.setInterval(() => void pull(), 5000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void pull();
+    }, 5000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
@@ -609,7 +613,9 @@ export default function App() {
       setState((cur) => (frozenRef.current ? cur : { ...cur, logs: rows }));
     };
     void pull();
-    const timer = window.setInterval(() => void pull(), 3000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void pull();
+    }, 3000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
@@ -1689,28 +1695,33 @@ export default function App() {
             </span>
             <h2>Omit v{updateInfo.version} is ready</h2>
             <p>{updateInfo.notes || "Faster blocking, fixes, and polish."}</p>
+            <p className="modal-hint">
+              {windows
+                ? "Omit downloads the new installer and closes so it can run. Your settings stay as they are."
+                : "Android will ask you to confirm the install. Nothing is uninstalled and your settings stay as they are."}
+            </p>
           </div>
           <div className="stack-actions">
-            {isAndroidRuntime() && updateInfo.otaUrl && updateInfo.otaSha256 && (
-              <button
-                className="primary-btn"
-                onClick={() => {
-                  applyOtaUpdate(updateInfo);
-                  setUpdateOpen(false);
-                }}
-              >
-                Instant UI-only update
-              </button>
-            )}
             <button
-              className="secondary-modal-btn"
+              className="primary-btn"
               onClick={() => {
                 downloadAndInstallUpdate(updateInfo);
                 setUpdateOpen(false);
               }}
             >
-              {windows ? "Download Windows update" : "Download full app"}
+              Download and install
             </button>
+            {isAndroidRuntime() && updateInfo.otaUrl && updateInfo.otaSha256 && (
+              <button
+                className="secondary-modal-btn"
+                onClick={() => {
+                  applyOtaUpdate(updateInfo);
+                  setUpdateOpen(false);
+                }}
+              >
+                Quick update (interfaces only)
+              </button>
+            )}
             <button className="secondary-modal-btn" onClick={handleUpdateDismiss}>
               Not now
             </button>
@@ -2004,8 +2015,9 @@ function HomeShieldCard({
               </button>
             </div>
             <div className="home-shield-note">
-              Other devices are filtered through this phone. Each device needs this address once;
-              it is saved there, and the shield now comes back on its own after a reboot.
+              A device's web traffic goes through this phone, so the phone must stay on. Apps that
+              ignore proxy settings are not covered. Each device needs this address once; the
+              shield now comes back by itself after a reboot.
             </div>
 
             <div className="home-shield-note">
@@ -2037,7 +2049,9 @@ function WindowsStatusCard({ onToast }: { onToast: (msg: string) => void }) {
       setDnsLocked(locked);
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 4000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 4000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
@@ -2118,7 +2132,9 @@ function LanShareBlock({ shieldActive, onToast }: { shieldActive: boolean; onToa
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 5000);
     return () => window.clearInterval(timer);
   }, []);
 

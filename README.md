@@ -10,7 +10,7 @@ Omit is a lightweight ad, tracker, ISP-unblocker, and privacy shield for Android
 
 ## Features
 
-- **Blocks ads & trackers with near-zero battery use** — keeps normal video and download traffic in the OS kernel.
+- **Blocks ads & trackers with near-zero battery use** — keeps normal video and download traffic in the OS kernel. Optional Wi-Fi sharing is the one exception, and it is off by default.
 - **Whole-Home Wi-Fi Shield** — protects TVs, consoles, and iPhones on your Wi-Fi via `:8080` / `/omit.pac` with zero apps installed on them.
 - **Burner Email** — disposable `mail.tm` / `guerrillamail` inbox with 1-tap code copy.
 - **Opens ISP-blocked sites at full speed** — local anti-DPI unblocking while keeping your local IP for UPI and banking.

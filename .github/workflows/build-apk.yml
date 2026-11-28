@@ -62,11 +62,16 @@ jobs:
         run: |
           chmod +x scripts/build_apk.sh
           mkdir -p dist-release
-          # With no signing secrets configured this stays a throwaway key, which is
-          # fine for pull-request builds but must never publish.
+          # A throwaway key produces an APK that no existing install can update.
+          # Once the stable key is in place, set REQUIRE_STABLE_SIGNING=1 in this
+          # file so publishing is blocked if the secret ever goes missing again.
           if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
             export ALLOW_EPHEMERAL_KEY=1
-            echo "::warning title=Unsigned identity::No ANDROID_KEYSTORE_BASE64 secret; APK is signed with a throwaway key and will not update in place."
+            echo "::warning title=Unsigned identity::No ANDROID_KEYSTORE_BASE64 secret; this APK cannot update an existing install."
+            if [ "${REQUIRE_STABLE_SIGNING:-0}" = "1" ] && [ "${{ github.event_name }}" = "push" ]; then
+              echo "::error title=Refusing to publish::Add ANDROID_KEYSTORE_BASE64 and RELEASE_CERT_SHA256 so every install shares one signing key. Without them no release can be updated in place."
+              exit 1
+            fi
           fi
           ANDROID_SDK_ROOT="$ANDROID_HOME" KOTLIN_HOME="/opt/kotlin" ./scripts/build_apk.sh ./dist-release/Omit.apk
 

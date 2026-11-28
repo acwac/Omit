@@ -580,42 +580,161 @@ class OmitJsBridge(
             .put("otaCode", raw.optInt("otaCode", versionCode))
     }
 
+    /**
+     * Downloads the new APK and hands it to the system installer.
+     *
+     * Android refuses to replace an app whose signing certificate differs, and a
+     * download can be a captive-portal HTML page or a truncated file. Both are
+     * caught here, before the installer opens, and reported in plain words
+     * instead of failing as a generic "app not installed".
+     */
     @JavascriptInterface
     fun downloadAndInstallUpdate(apkUrl: String) {
-        val targetUrl = if (apkUrl.isBlank()) "https://acwac.github.io/Omit/downloads/Omit.apk" else apkUrl
+        val targetUrl = if (apkUrl.isBlank()) DEFAULT_APK_URL else apkUrl
+        if (!targetUrl.startsWith("https://")) {
+            activity.pushToast("Update blocked: insecure download URL")
+            return
+        }
         Thread {
+            var apkFile: java.io.File? = null
             try {
                 activity.pushToast("Downloading Omit update...")
                 val updatesDir = java.io.File(activity.cacheDir, "updates").apply { mkdirs() }
-                val apkFile = java.io.File(updatesDir, "Omit-update.apk")
+                // A fresh file every time: a stale partial download must never be
+                // handed to the installer as if it were the new version.
+                val target = java.io.File(updatesDir, "Omit-update.apk")
+                apkFile = target
+                if (target.exists()) target.delete()
                 val conn = (java.net.URL(targetUrl).openConnection() as java.net.HttpURLConnection).apply {
-                    connectTimeout = 10000
-                    readTimeout = 30000
+                    connectTimeout = 15000
+                    readTimeout = 60000
+                    instanceFollowRedirects = true
+                    setRequestProperty("Cache-Control", "no-cache")
                 }
-                conn.inputStream.use { input ->
-                    java.io.FileOutputStream(apkFile).use { output ->
-                        input.copyTo(output)
-                    }
+                val code = conn.responseCode
+                if (code !in 200..299) {
+                    activity.pushToast("Update download failed (HTTP $code)")
+                    return@Thread
                 }
-                activity.runOnUiThread {
-                    if (android.os.Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) {
+                conn.inputStream.use { input -> java.io.FileOutputStream(target).use { input.copyTo(it) } }
+                conn.disconnect()
+
+                val problem = validateDownloadedApk(target)
+                if (problem != null) {
+                    activity.pushToast(problem)
+                    return@Thread
+                }
+
+                val canInstall = if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    activity.packageManager.canRequestPackageInstalls()
+                } else true
+                if (!canInstall) {
+                    activity.pushToast("Allow Omit to install this update, then tap Update again")
+                    activity.runOnUiThread {
                         val permIntent = android.content.Intent(
                             android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                             android.net.Uri.parse("package:${activity.packageName}")
                         ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                         activity.startActivity(permIntent)
                     }
-                    val contentUri = android.net.Uri.parse("content://app.omit.shield.updateprovider/Omit-update.apk")
+                    return@Thread
+                }
+
+                activity.runOnUiThread {
+                    val contentUri = android.net.Uri.parse(
+                        "content://app.omit.shield.updateprovider/Omit-update.apk"
+                    )
                     val installIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
                         setDataAndType(contentUri, "application/vnd.android.package-archive")
-                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        addFlags(
+                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        )
                     }
-                    activity.startActivity(installIntent)
+                    try {
+                        activity.startActivity(installIntent)
+                    } catch (_: Throwable) {
+                        activity.pushToast("No installer available on this device")
+                    }
                 }
             } catch (_: Throwable) {
+                apkFile?.delete()
                 activity.pushToast("Update download failed")
             }
         }.start()
+    }
+
+    /**
+     * Returns a user-facing problem, or null when the file is installable.
+     * Checks the package identity, then the signing certificate, because a
+     * mismatched certificate is the one failure the installer reports badly.
+     */
+    private fun validateDownloadedApk(file: java.io.File): String? {
+        if (!file.isFile || file.length() < 100_000L) {
+            file.delete()
+            return "The downloaded update was incomplete — try again"
+        }
+        val pm = activity.packageManager
+        @Suppress("DEPRECATION")
+        val archive = pm.getPackageArchiveInfo(file.absolutePath, android.content.pm.PackageManager.GET_ACTIVITIES)
+            ?: run {
+                file.delete()
+                return "The downloaded file is not an app — try again on Wi-Fi"
+            }
+        if (archive.packageName != activity.packageName) {
+            file.delete()
+            return "The download was not Omit — update cancelled"
+        }
+        val incoming = archive.longVersionCode
+        if (incoming <= installedVersionCode().toLong()) {
+            file.delete()
+            return "That build is not newer than the installed app"
+        }
+        val sameSigner = signingCertMatches(file)
+        if (!sameSigner) {
+            file.delete()
+            return "This build is signed differently, so Android cannot update in place. " +
+                "A stable release key has to be restored by the developer."
+        }
+        return null
+    }
+
+    /** Compares the first signer certificate of a downloaded APK with ours. */
+    private fun signingCertMatches(file: java.io.File): Boolean {
+        return try {
+            val pm = activity.packageManager
+            val pkg = activity.packageName
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                val flags = android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                val installedInfo = pm.getPackageInfo(pkg, flags)
+                val installed = installedInfo.signingInfo?.apkContentsSigners ?: return true
+                val archiveInfo = pm.getPackageArchiveInfo(file.absolutePath, flags) ?: return false
+                val incoming = archiveInfo.signingInfo?.apkContentsSigners ?: return true
+                if (installed.isEmpty() || incoming.isEmpty()) return true
+                installed.first().toCharsString() == incoming.first().toCharsString()
+            } else {
+                val flags = android.content.pm.PackageManager.GET_SIGNATURES
+                val installedInfo = pm.getPackageInfo(pkg, flags)
+                val installed = installedInfo.signatures ?: return true
+                val archiveInfo = pm.getPackageArchiveInfo(file.absolutePath, flags) ?: return false
+                val incoming = archiveInfo.signatures ?: return true
+                if (installed.isEmpty() || incoming.isEmpty()) return true
+                installed.first().toCharsString() == incoming.first().toCharsString()
+            }
+        } catch (_: Throwable) {
+            // If the check cannot run, let the system installer decide.
+            true
+        }
+    }
+
+    /** Version string of this install, used by the About row. */
+    @JavascriptInterface
+    fun getVersionName(): String {
+        return try {
+            activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: ""
+        } catch (_: Throwable) {
+            ""
+        }
     }
 
     @JavascriptInterface
@@ -651,6 +770,7 @@ class OmitJsBridge(
 
     companion object {
         private const val VERSION_JSON_URL = "https://acwac.github.io/Omit/version.json"
+        private const val DEFAULT_APK_URL = "https://acwac.github.io/Omit/downloads/Omit.apk"
 
         fun buildStateJson(): JSONObject {
             val nowMs = System.currentTimeMillis()

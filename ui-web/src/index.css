@@ -2273,3 +2273,11 @@ html.dark .update-pill {
     scroll-behavior: auto !important;
   }
 }
+
+/* Secondary explanation inside the update modal. */
+.modal-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 8px;
+}

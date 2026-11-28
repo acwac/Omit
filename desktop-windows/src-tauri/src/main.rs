@@ -1822,6 +1822,11 @@ fn get_windows_dns_lock() -> bool {
     windows_dns_locked()
 }
 
+/// Downloads the new installer, checks it is really an executable, then runs it.
+///
+/// A captive portal answers with HTML and a truncated download answers with
+/// less than a whole file; launching either would show a scary "not a valid
+/// Win32 application" instead of a useful message, so both are rejected first.
 #[tauri::command]
 fn download_and_install_update(exe_url: String) -> Result<(), String> {
     let url = if exe_url.is_empty() {
@@ -1833,15 +1838,22 @@ fn download_and_install_update(exe_url: String) -> Result<(), String> {
         return Err("Refusing to download over an insecure connection".into());
     }
     let bytes = reqwest::blocking::get(&url)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Download failed: {e}"))?
         .bytes()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Download failed: {e}"))?;
+
+    // An NSIS installer is a PE executable; an HTML error page is not.
+    if bytes.len() < 1_000_000 || bytes[0] != b'M' || bytes[1] != b'Z' {
+        return Err("The download was not a complete installer — try again".into());
+    }
+
     let installer_path = std::env::temp_dir().join("Omit-Update.exe");
-    std::fs::write(&installer_path, &bytes).map_err(|e| e.to_string())?;
+    std::fs::write(&installer_path, &bytes).map_err(|e| format!("Could not save the update: {e}"))?;
     restore_windows_dns();
     std::process::Command::new(&installer_path)
         .spawn()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Could not start the installer: {e}"))?;
+    // The installer replaces this process's executable, so it must exit first.
     std::process::exit(0);
 }
 

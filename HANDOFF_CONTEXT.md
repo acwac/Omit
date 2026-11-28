@@ -326,3 +326,51 @@ Answer given plainly, and the UI now states it:
   reference in README, the website and this file are gone. Burner is email only.
 - Nothing in the remaining feature automates a provider or evades a check.
 
+## In-app updates (2.5.2)
+
+**Why every install needed a manual reinstall.** Each CI build was signed with a
+freshly generated throwaway key because `ANDROID_KEYSTORE_BASE64` was never set.
+Android refuses to replace an installed app whose certificate differs, so the
+installer failed with "App not installed" — the update code itself was fine.
+Confirmed by hashing the signer of every published APK: six releases, six
+different certificates. CI said so in its own annotation.
+
+**The fix requires the release key, which only the repo owner can add.** The
+keystore must be the same one every release uses, and the download page must be
+re-published with it once:
+
+1. Base64 the keystore and add these repository secrets (Settings → Secrets and
+   variables → Actions):
+
+       ANDROID_KEYSTORE_BASE64   base64 -w0 signing/omit-release.jks
+       ANDROID_KEYSTORE_PASSWORD store password
+       ANDROID_KEY_PASSWORD      key password (usually the same)
+       ANDROID_KEY_ALIAS         omit
+       RELEASE_CERT_SHA256       26:1D:03:72:01:14:64:8D:74:4A:13:92:FD:07:7D
+                                 :74:F0:93:C6:16:5D:14:5B:00:55:EA:49:01:B0:
+                                 EE:9F:9F
+
+2. Set `REQUIRE_STABLE_SIGNING=1` in the `Build Omit APK` step so a missing
+   secret fails the build instead of silently publishing an unupdatable APK.
+
+Nothing is uninstalled: one final manual APK install is needed because the
+installed copy is signed with a per-build key that no longer exists. Every
+update after that is in place.
+
+Until the secret exists, the app detects the mismatch before the installer opens
+and says so in plain words instead of failing as "App not installed".
+
+## Wi-Fi sharing: what it actually does (answers given, keep copy honest)
+
+- Traffic is **not** tunnelled. The phone is an HTTP proxy: a device sends its
+  web requests to the phone, which returns the replies. Nothing of the client's
+  is stored on the phone.
+- The phone must stay awake, so the Wi-Fi radio stays busy; battery depends on
+  how much the other devices browse. Values are never polled in the background,
+  because every UI poller is gated on `document.visibilityState`.
+- Only **web traffic** is filtered. Other protocols (DNS from the device itself,
+  games, most apps) are not covered, and a device that ignores proxy settings is
+  not filtered at all.
+- That is why the README and site scope "~1% battery" to normal use and name
+  sharing as the exception it is.
+
